@@ -1,0 +1,45 @@
+{
+  "$schema": "https://schema.freqtrade.io/schema.json",
+  "max_open_trades": 1,
+  "stake_currency": "USDT",
+  "stake_amount": 100,
+  "tradable_balance_ratio": 0.99,
+  "timeframe": "15m",
+  "dry_run": true,
+  "dry_run_wallet": 1000,
+  "cancel_open_orders_on_exit": true,
+  "trading_mode": "futures",
+  "margin_mode": "isolated",
+  "db_url": "sqlite:///user_data/tradesv3_binance_dryrun.sqlite",
+  "logfile": "user_data/logs/freqtrade_binance_dryrun.log",
+  "unfilledtimeout": {"entry": 10, "exit": 10, "unit": "minutes"},
+  "entry_pricing": {"price_side": "other", "use_order_book": true, "order_book_top": 1},
+  "exit_pricing": {"price_side": "other", "use_order_book": true, "order_book_top": 1},
+  "exchange": {
+    "name": "binance",
+    "key": "",
+    "secret": "",
+    "ccxt_config": {},
+    "ccxt_async_config": {},
+    "pair_whitelist": ["BTC/USDT:USDT"],
+    "pair_blacklist": []
+  },
+  "pairlists": [{"method": "StaticPairList"}],
+  "order_types": {
+    "entry": "market", "exit": "market", "stoploss": "market",
+    "stoploss_on_exchange": false
+  },
+  "order_time_in_force": {"entry": "GTC", "exit": "GTC"},
+  "api_server": {
+    "enabled": false,
+    "listen_ip_address": "127.0.0.1",
+    "listen_port": 8080,
+    "username": "disabled",
+    "password": "disabled",
+    "jwt_secret_key": "public-example-api-server-is-disabled"
+  },
+  "bot_name": "jev-binance-dry-run",
+  "initial_state": "running",
+  "force_entry_enable": false,
+  "internals": {"process_throttle_secs": 5}
+}

@@ -1,0 +1,33 @@
+# Copy to config/jev.yaml and adjust for your own research run.
+# Secrets belong in .env, never in this file.
+data_dir: data
+symbols:
+  - BTC/USDT:USDT
+history:
+  start: "2022-01"
+  end: "2025-08"
+timeframe: 15m
+label_timeframe: 1m
+grid:
+  horizon_bars: 16
+  tp: [0.005, 0.010, 0.015, 0.020, 0.030]
+  sl: [0.005, 0.0075, 0.010, 0.015]
+  levels: [0.005, 0.0075, 0.010, 0.015, 0.020, 0.030]
+costs:
+  taker_fee: 0.0005
+  half_spread: 0.00005
+  slippage: 0.0001
+  funding_per_8h: 0.0001
+  expected_hold_hours: 2.0
+thresholds:
+  min_ev_net: 0.001
+  max_regime_entropy: 1.10
+  max_vol_extreme: 0.25
+risk:
+  risk_frac: 0.005
+  leverage: 1
+  max_open_trades: 1
+jev:
+  model_id: "~typesafe/jev-latest"
+  prompt_version: v3
+  cache_dir: data/jev_cache
