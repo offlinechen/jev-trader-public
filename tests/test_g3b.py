@@ -36,12 +36,12 @@ def test_g3b_candidates_require_full_matched_oof_coverage(tmp_path):
         "f_4h_trend": [-1.0, 0.0, 1.0],
     })
     rows = []
-    # Bar 100: both cells have complete predictions for all baselines.
+    # 100：两个单元都有全部基线预测。 / Bar 100: both cells have all baselines.
     for side in ("long", "short"):
         rows += _oof_rows(100, side, 0.01, 0.005, 2)
-    # Bar 200 has one ambiguous cell; its other cell is still fully covered.
+    # 200：一个单元歧义，另一个仍完整。 / Bar 200: one ambiguous cell, one covered.
     rows += _oof_rows(200, "short", 0.01, 0.005, 2)
-    # Bar 300's non-ambiguous long cell is missing one baseline model.
+    # 300：非歧义多头单元缺少一个基线。 / Bar 300: long cell lacks one baseline.
     rows += _oof_rows(300, "long", 0.01, 0.005, 2)[:-1]
     pd.DataFrame(rows).to_parquet(oof_dir / "fold_001.parquet", index=False)
 

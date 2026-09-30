@@ -243,7 +243,9 @@ def test_non_object_success_body_is_a_schema_failure(tmp_path):
 
 
 def test_retries_schema_failure_before_accepting_response(tmp_path):
-    """Opt-in only: a paid retry of an invalid answer is off by default (see
+    """无效响应的付费重试必须主动启用，默认关闭，避免重复计费。
+
+    Opt-in only: a paid retry of an invalid answer is off by default (see
     tests/test_budget.py) because it bills twice for a usually-identical answer."""
     questions = {
         "p_long_tp050_sl050": {"type": "noul", "instructions": "TP?"},

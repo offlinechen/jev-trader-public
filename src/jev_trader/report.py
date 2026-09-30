@@ -1,4 +1,6 @@
-"""T2.7 -- read the OOF dataset back and score it.
+"""T2.7：重新读取并评分 OOF 数据。 / Reload and score the OOF dataset.
+
+直接消费持久化预测，而非内存中的模型；若无法复现基线结果，后续增量检验便不可信。
 
 Deliberately consumes `data/oof/` rather than model objects: if the persisted
 predictions cannot reproduce the headline numbers, Phase 3's incremental test
@@ -78,7 +80,10 @@ def _cell_auc_tp_vs_sl(y: np.ndarray, score: np.ndarray) -> float:
 def within_cell_auc_ci(
     oof: pd.DataFrame, model: str, n_boot: int = 200, seed: int = 0,
 ) -> tuple[float, float, float]:
-    """Day-clustered CI for the within-cell mean auc_tp_vs_sl.
+    """单元内平均 auc_tp_vs_sl 的整日聚类置信区间。 / Day-clustered CI for within-cell AUC.
+
+同一根 K 线的各单元共享价格路径，相邻 K 线的未来窗口也重叠；
+将单元行视为独立会虚假缩窄置信区间。
 
     Resampling whole DAYS is what makes this honest: the 40 cells of a single
     bar are 40 views of one price path, and overlapping 4h horizons make
@@ -119,7 +124,9 @@ def reliability_table(oof: pd.DataFrame, model: str, cls: int = 1) -> pd.DataFra
 
 
 def within_cell(oof: pd.DataFrame) -> pd.DataFrame:
-    """Mean of the per-cell metrics -- the honest view.
+    """逐单元计算后取平均，避免混合单元 AUC 误导。 / Average per-cell metrics, the honest view.
+
+不同网格单元基础概率差异很大，混合 AUC 会把网格几何结构误认为预测能力。
 
     **Pooled AUC across cells is not a skill measure.** The 40 cells have base
     rates from 0.40 down to 0.02, so merely knowing which cell a row belongs to
@@ -138,15 +145,11 @@ def summary(data_dir: str | Path) -> dict:
     oof = load_oof(data_dir)
     pool, wc = pooled(oof), within_cell(oof)
 
-    # The DIRECTIONAL hurdle, fixed to LightGBM by decision rather than taken as
-    # a max: auc_tp_first is largely a volatility forecast -- "does the move
-    # happen" -- which vol clustering makes easy and which earns nothing alone.
-    # auc_tp_vs_sl asks the tradeable question: given the trade resolved, was it
-    # the winning side? Jev is not required to beat every baseline on every
-    # metric; the research question is whether it adds *directional* information.
+    # 方向门槛固定为 LightGBM；TP 是否发生多半只是波动率预测。 / Fix the directional hurdle to LightGBM; TP occurrence mostly predicts volatility.
+    # auc_tp_vs_sl 检验 Jev 是否增加押中方向的信息。 / Test whether Jev adds information about the winning direction.
     return {
         "oof": oof,
-        "pooled": pool,              # diagnostic only, see within_cell()
+        "pooled": pool,              # 仅诊断，见 within_cell() / Diagnostic only; see within_cell().
         "within_cell": wc,
         "by_cell": by_cell(oof),
         "by_fold": by_fold(oof),

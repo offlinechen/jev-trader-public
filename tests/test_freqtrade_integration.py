@@ -1,4 +1,4 @@
-"""Optional end-to-end proof against the installed Freqtrade engine."""
+"""使用已安装 Freqtrade 引擎的可选端到端验证。 / Optional end-to-end Freqtrade proof."""
 
 from __future__ import annotations
 
@@ -126,7 +126,7 @@ def test_freqtrade_reads_signal_store_and_backtests_next_open_and_exits(tmp_path
     assert roi_trade["open_rate"] == pytest.approx(100.0)
     assert pd.Timestamp(roi_trade["open_date"]) == dates[21]
     assert roi_trade["exit_reason"] == "roi"
-    # Freqtrade ROI is net of two fees, so 1% net needs >1% price movement.
+    # Freqtrade ROI 扣双边费，净 1% 需价格涨幅超过 1%。 / Net 1% ROI needs >1% move after two fees.
     assert roi_trade["close_rate"] == pytest.approx(101.1)
     assert timeout_trade["open_rate"] == pytest.approx(100.0)
     assert timeout_trade["exit_reason"] == "timeout_16_bars"

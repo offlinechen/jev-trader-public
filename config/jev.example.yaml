@@ -1,5 +1,5 @@
-# Copy to config/jev.yaml and adjust for your own research run.
-# Secrets belong in .env, never in this file.
+# 复制为 config/jev.yaml 并按研究需要修改。 / Copy to config/jev.yaml and adjust for your research.
+# 密钥只放在 .env，绝不放在此文件。 / Keep secrets in .env, never in this file.
 data_dir: data
 symbols:
   - BTC/USDT:USDT

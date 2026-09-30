@@ -1,4 +1,4 @@
-"""G3a evaluator: raw Jev ranking and incremental value, before calibration."""
+"""G3a 评估器：校准前的 Jev 原始排序和增量价值。 / G3a raw ranking and incremental-value evaluator."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def _validate_prediction_artifact(predictions: str | Path, frame: pd.DataFrame,
                                   grid: dict | None = None,
                                   expected_model_id: str | None = None,
                                   expected_symbol: str | None = None) -> str:
-    """Reject incomplete or mismatched new meter artifacts before any output."""
+    """在输出前拒绝不完整或身份不匹配的 meter 产物。 / Reject incomplete or mismatched meter artifacts."""
     path = Path(predictions)
     if path.name == "metering_2000.parquet":
         if path.resolve() != (Path(data_dir) / "metering_2000.parquet").resolve():
@@ -177,7 +177,7 @@ def _raw_probabilities(p_tp, p_sl):
 
 
 def to_long(frame: pd.DataFrame, grid: dict) -> pd.DataFrame:
-    """Expand successful responses into raw, labelled barrier-cell rows."""
+    """将成功响应展开为带标签的原始障碍单元行。 / Expand successful responses into labelled cell rows."""
     rows = []
     for side in ("long", "short"):
         for tp in grid["tp"]:
@@ -313,7 +313,7 @@ def _merge_baseline(jev: pd.DataFrame, oof: pd.DataFrame, model: str) -> pd.Data
 
 
 def _stacker(jev: pd.DataFrame, oof: pd.DataFrame, horizon_bars: int) -> dict:
-    """Chronological stacker with within-cell AUC and day-block deltas."""
+    """按时间训练 stacker，报告单元内 AUC 和整日增量。 / Chronological stacker with within-cell AUC and day-block deltas."""
     g = _merge_baseline(jev, oof, "lgbm").sort_values("ts")
     resolved = _resolved(g)
     if len(resolved) < 100:
@@ -498,7 +498,7 @@ def _fmt(value):
 
 def gate_decision(ci: tuple[float, float], delta_auc: float, delta_brier: float,
                   stack_status: str) -> str:
-    """Apply the frozen G3a gate to validation-clean, within-cell metrics."""
+    """用冻结的 G3a 门槛评估已验证的单元内指标。 / Apply frozen G3a gate to valid within-cell metrics."""
     auc_lo, auc_hi = ci
     if stack_status != "ok":
         return "INCONCLUSIVE — stacker unavailable"

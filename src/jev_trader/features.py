@@ -1,4 +1,7 @@
-"""Feature engine.
+"""特征引擎。 / Feature engine.
+
+每列只依赖 t 及之前的 K 线；截断历史重算测试会检查这一点。
+1h/4h 从 15m 重采样，并以完整收盘时间合并，自动排除尚未收盘的高周期 K 线。
 
 Every column produced here must be a pure function of bars at or before t.
 `tests/test_causality.py` enforces it by rebuilding features on truncated
@@ -19,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 BAR_MS = 900_000
-MTF = {"1h": 4, "4h": 16}  # multiples of the 15m bar
+MTF = {"1h": 4, "4h": 16}  # 15m 的倍数 / Multiples of the 15m bar.
 OHLCV_FEATURES_V1 = (
     "f_ret_1", "f_ret_2", "f_ret_4", "f_ret_8", "f_ret_16", "f_ret_32",
     "f_hl_range", "f_close_pos_in_range", "f_dist_high_24h", "f_dist_low_24h",
@@ -31,7 +34,7 @@ OHLCV_FEATURES_V1 = (
 
 
 def build_ohlcv_features_v1(df: pd.DataFrame) -> pd.DataFrame:
-    """Return the frozen cross-venue feature contract; taker flow is excluded."""
+    """返回冻结的跨交易所特征契约，不含主动成交量。 / Return frozen cross-venue features without taker flow."""
     features = build_features(df.drop(columns="taker_buy_volume", errors="ignore"))
     missing = set(OHLCV_FEATURES_V1).difference(features.columns)
     if missing:
@@ -64,7 +67,7 @@ def _adx(df: pd.DataFrame, n: int = 14) -> pd.Series:
 
 
 def _resample(df: pd.DataFrame, k: int) -> pd.DataFrame:
-    """Aggregate k 15m bars, labelled by open time, with an honest close time."""
+    """聚合 k 根 15m K 线，以开盘标记并记录真实收盘时间。 / Aggregate k bars with open label and honest close time."""
     bucket = df["ts"] // (k * BAR_MS) * (k * BAR_MS)
     out = (
         df.groupby(bucket)
@@ -88,12 +91,12 @@ def _mtf(df: pd.DataFrame, k: int, tag: str) -> pd.DataFrame:
 
 
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
-    """15m OHLCV -> feature frame, one row per input bar, keyed by `ts`."""
+    """每根 15m K 线生成一行以 ts 为键的特征。 / Build one ts-keyed feature row per 15m bar."""
     df = df.sort_values("ts").reset_index(drop=True)
     c, h, lo, v = df["close"], df["high"], df["low"], df["volume"]
     f = pd.DataFrame({"ts": df["ts"]})
 
-    # --- price -------------------------------------------------------------
+    # --- 价格 / price -------------------------------------------------------
     for n in (1, 2, 4, 8, 16, 32):
         f[f"f_ret_{n}"] = c.pct_change(n, fill_method=None)
     f["f_hl_range"] = (h - lo) / c
@@ -101,23 +104,23 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     f["f_dist_high_24h"] = c / h.rolling(96).max() - 1
     f["f_dist_low_24h"] = c / lo.rolling(96).min() - 1
 
-    # --- trend -------------------------------------------------------------
+    # --- 趋势 / trend -------------------------------------------------------
     ema = {n: c.ewm(span=n, adjust=False, min_periods=n).mean() for n in (20, 60, 120)}
     for n, e in ema.items():
-        f[f"f_ema{n}_rel"] = c / e - 1          # relative, never a raw level
+        f[f"f_ema{n}_rel"] = c / e - 1          # 相对值，不用原始价格 / Relative, never a raw level.
     f["f_ema20_slope"] = ema[20].pct_change(4, fill_method=None)
     f["f_ema60_slope"] = ema[60].pct_change(4, fill_method=None)
     f["f_trend_strength"] = ema[20] / ema[60] - 1
     f["f_adx"] = _adx(df)
 
-    # --- volatility --------------------------------------------------------
+    # --- 波动率 / volatility ------------------------------------------------
     logret = np.log(c).diff()
     f["f_atr_pct"] = _atr(df) / c
     for tag, n in (("1h", 4), ("4h", 16), ("24h", 96)):
         f[f"f_rv_{tag}"] = logret.rolling(n).std()
     f["f_bb_width"] = 4 * c.rolling(20).std() / c.rolling(20).mean()
 
-    # --- volume ------------------------------------------------------------
+    # --- 成交量 / volume ----------------------------------------------------
     vm, vs = v.rolling(96).mean(), v.rolling(96).std()
     f["f_vol_ratio"] = v / vm
     f["f_vol_z"] = (v - vm) / vs
@@ -125,7 +128,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     if "taker_buy_volume" in df:
         f["f_buy_sell_ratio"] = df["taker_buy_volume"] / v.replace(0, np.nan)
 
-    # --- multi-timeframe context -------------------------------------------
+    # --- 多周期上下文 / multi-timeframe context ------------------------------
     f["close_ts"] = df["ts"] + BAR_MS
     for tag, k in MTF.items():
         f = pd.merge_asof(f, _mtf(df, k, tag), on="close_ts", direction="backward")

@@ -1,4 +1,7 @@
-"""Guards for the selective-trading evaluator.
+"""选择性交易评估器的保护测试。 / Guards for the selective-trading evaluator.
+
+重点防止“看起来可交易”却使用未来信息：同折校准、全期分数门槛，
+或把同一路径的 40 个单元当作 40 笔独立交易。
 
 The failure mode that matters is a result that looks tradeable only because
 some step saw the future: calibration fitted on the fold it is applied to, a
@@ -55,7 +58,7 @@ def test_calibration_never_sees_the_fold_it_calibrates():
 def test_calibration_skips_folds_without_enough_history():
     out = calibrate(oof_frame(), H, min_prior_folds=3)
     assert out["fold"].min() == 3
-    assert np.allclose(out[["c_sl", "c_tp", "c_to"]].sum(1), 1.0)
+    assert np.allclose(out[["c_sl", "c_tp", "c_to"]].sum(axis=1), 1.0)
 
 
 def bars_frame(n_folds=10, per_fold=200, seed=1):
@@ -72,7 +75,7 @@ def test_walk_forward_cutoffs_ignore_the_future():
     bars = bars_frame()
     before = select(bars, "ev", 0.1, "walk_forward", H)
     future = bars.copy()
-    future.loc[future["fold"] >= 7, "ev"] += 100.0      # wildly change later folds
+    future.loc[future["fold"] >= 7, "ev"] += 100.0      # 大幅改动未来折 / Wildly change later folds.
     after = select(future, "ev", 0.1, "walk_forward", H)
     early = lambda s: set(s.loc[s["fold"] < 7, "ts"])
     assert early(before) == early(after)
@@ -172,7 +175,7 @@ def test_ess_is_n_when_independent_and_days_when_duplicated():
     one = rng.normal(size=200)
     dup = pd.DataFrame({"net": np.repeat(one, 40), "day": np.repeat(np.arange(200), 40),
                         "win": False, "outcome": 0, "ev": 0.0})
-    assert summarise(dup)["ess"] == pytest.approx(200, rel=0.15)   # 40 copies != 40 trades
+    assert summarise(dup)["ess"] == pytest.approx(200, rel=0.15)   # 40 份复制不等于 40 笔交易 / Copies are not trades.
 
 
 def test_non_overlapping_keeps_one_position_at_a_time():

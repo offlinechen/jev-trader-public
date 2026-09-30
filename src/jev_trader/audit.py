@@ -1,4 +1,7 @@
-"""Jev spend audit: reconcile local run records against OpenRouter's ledger.
+"""Jev 支出审计：将本地记录与 OpenRouter 账本核对。 / Reconcile local Jev records with OpenRouter.
+
+信息来源依次为本地报告、运行产物、响应缓存和供应商账户数据。
+早期校验失败的付费 2xx 响应可能未被本地记账，因此不能只依赖本地合计。
 
 Four sources, from least to most authoritative:
 
@@ -43,15 +46,15 @@ _REPORT_FIELDS = {
 
 
 def classify_error(text: str) -> str:
-    """Bucket a recorded request error by whether it can have been billed."""
+    """按错误是否可能计费分类。 / Classify request errors by possible billing."""
     if not text:
         return "ok"
     m = re.search(r"failed \((\d{3})\)", text)
     if m:
-        return f"http_{m.group(1)}"          # rejected upstream: not billed
+        return f"http_{m.group(1)}"          # 上游拒绝，不计费 / Rejected upstream; not billed.
     if "transport failed" in text:
-        return "transport"                   # may or may not have been billed
-    return "rejected_2xx"                    # answered, billed, rejected locally
+        return "transport"                   # 是否计费未知 / Billing uncertain.
+    return "rejected_2xx"                    # 已响应并计费，本地拒绝 / Billed response rejected locally.
 
 
 def from_reports(docs_dir: Path) -> pd.DataFrame:
@@ -72,7 +75,7 @@ def from_reports(docs_dir: Path) -> pd.DataFrame:
 
 
 def _ledger_by_identity(data_dir: Path) -> dict[tuple[int, str], dict]:
-    """Return one cumulative ledger snapshot per logical run identity."""
+    """每个逻辑运行身份只返回最新累计账本快照。 / Return one cumulative ledger snapshot per run identity."""
     out = {}
     path = data_dir / "jev_spend_ledger.jsonl"
     if not path.is_file():
@@ -96,7 +99,7 @@ def _ledger_by_identity(data_dir: Path) -> dict[tuple[int, str], dict]:
             "budget": budget,
             "status": entry.get("status", "unknown"),
         }
-        out[key] = snapshot  # append order makes the last event authoritative
+        out[key] = snapshot  # 追加顺序决定末条为准 / The last appended event is authoritative.
     return out
 
 
@@ -219,7 +222,7 @@ def _get(url: str, key: str, timeout: float = 20.0) -> tuple[int, dict]:
 
 def from_provider(api_key: str | None, base_url: str | None,
                   management_key: str | None = None) -> dict:
-    """Per-key usage via /api/v1/key; account totals via /api/v1/credits."""
+    """分别读取密钥用量和账户总额。 / Read per-key usage and account totals from provider endpoints."""
     if not api_key or not base_url:
         return {"available": False, "reason": "no JEV_API_KEY / JEV_BASE_URL in this environment"}
     origin = "{0.scheme}://{0.netloc}".format(urlsplit(base_url))
@@ -257,7 +260,7 @@ def reconcile(runs: pd.DataFrame, cache: dict, provider: dict) -> dict:
         "usd_per_success": runs_cost / succ if succ else float("nan"),
         "cache_responses": cache["responses"],
         "cache_cost_usd": cache["cost_usd"],
-        # Accepted responses in the cache that no run report accounts for.
+        # 缓存里有报告未计入的有效响应。 / Accepted cached responses missing from run reports.
         "dev_cached_usd": max(0.0, cache["cost_usd"] - runs_cost) if cache["responses"] else float("nan"),
     }
     usage = provider.get("key_usage")
@@ -269,7 +272,7 @@ def reconcile(runs: pd.DataFrame, cache: dict, provider: dict) -> dict:
 
 
 def key_audit(root: Path, api_key: str | None) -> dict:
-    """Check outputs for accidental key exposure without returning the key."""
+    """扫描意外泄露的密钥，不返回密钥本身。 / Scan for leaked keys without returning the key."""
     if not api_key:
         return {"configured": False, "exposed_files": []}
     exposed = []
@@ -294,7 +297,7 @@ def key_audit(root: Path, api_key: str | None) -> dict:
 
 
 def quarter_audit(data_dir: Path) -> dict:
-    """Return attempted/valid quarter counts from the local run artifacts."""
+    """从本地产物统计各季度尝试和有效数量。 / Count attempted and valid samples by quarter."""
     out = {}
     for path in sorted(data_dir.glob("metering_*.parquet")):
         match = re.fullmatch(r"metering_(\d+)(?:_([0-9a-f]{16}))?\.parquet", path.name)

@@ -1,4 +1,9 @@
-"""Strategy policies over the calibrated TP/SL matrix -- an experiment, not a default.
+"""校准后 TP/SL 矩阵上的策略政策；只是实验，不是默认交易策略。
+/ Experimental policies over the calibrated TP/SL matrix, not a trading default.
+
+固定单元是低选择偏差的参照；argmax、局部稳健、softmax 和多 TP 是对照。
+每条腿对应一个网格单元，实际收益按权重加总，不需要近似。
+所有政策共用 weights(ev)，参数在评估前固定，不在这里调优。
 
 Hypothesis under test: the probability matrix is a distributional object, and
 hard-selecting its maximum cell (40 noisy "lottery tickets", keep the best)
@@ -45,7 +50,7 @@ SIDES = ("long", "short")
 DAY_MS = 86_400_000
 
 
-# --- plan -------------------------------------------------------------------
+# --- 交易计划 / plan ---------------------------------------------------------
 
 @dataclass(frozen=True)
 class Leg:
@@ -56,40 +61,42 @@ class Leg:
 
 @dataclass(frozen=True)
 class TradePlan:
-    side: str                    # "long" | "short"
-    entry: str                   # "next_open": the bar after the signal bar
-    stop: float | None           # shared stop when every leg has one; else None
-    legs: tuple[Leg, ...]        # partial exits / micro-positions; weights sum to 1
-    timeout_bars: int            # unfilled legs exit at market at the horizon
-    predicted_ev: float          # sum_i w_i * EV_i, net of costs
-    robustness: float            # the policy's ranking score
+    side: str                    # 多头或空头 / Long or short.
+    entry: str                   # 信号后下一根开盘 / Open after the signal bar.
+    stop: float | None           # 各腿共用止损，否则 None / Shared stop, else None.
+    legs: tuple[Leg, ...]        # 部分退出或微仓位，权重和为 1 / Legs with weights summing to 1.
+    timeout_bars: int            # 未成交退出腿到期市价退出 / Remaining legs exit at horizon.
+    predicted_ev: float          # 净成本加权 EV / Cost-net weighted EV.
+    robustness: float            # 政策排序分数 / Policy ranking score.
 
 
 @dataclass(frozen=True)
 class Surface:
-    """One bar's calibrated EV matrix: ev[side, tp_index, sl_index]."""
+    """单根 K 线的校准 EV 矩阵。 / One bar's calibrated EV matrix by side, TP, and SL."""
     ev: np.ndarray
     tp: tuple[float, ...]
     sl: tuple[float, ...]
     horizon_bars: int
 
 
-# --- policies ---------------------------------------------------------------
+# --- 政策 / policies ---------------------------------------------------------
 
 class TradePolicy:
     name = "policy"
 
     def weights(self, ev: np.ndarray) -> np.ndarray:
-        """ev: (n, 2, n_tp, n_sl) -> nonnegative weights, one side per bar, sum 1."""
+        """EV 矩阵映射为非负权重，每根仅一方向、权重和为 1。 / Map EV to one-side, unit-sum weights."""
         raise NotImplementedError
 
     def score(self, ev: np.ndarray, w: np.ndarray) -> np.ndarray:
-        """Ranking score used for coverage cut-offs; default = predicted policy EV."""
+        """覆盖率筛选排序分数，默认为政策预测 EV。 / Coverage ranking score; default is predicted EV."""
         return (w * ev).sum((1, 2, 3))
 
     def build_plan(self, surface: Surface, market_state: dict | None = None,
                    costs: dict | None = None) -> TradePlan:
-        """Live entry point. EV is already net of costs, so `costs` is accepted
+        """实时候选计划入口；EV 已扣成本，costs 仅为接口稳定性保留，market_state 留给未来状态门槛。
+
+        Live entry point. EV is already net of costs, so `costs` is accepted
         for interface stability; `market_state` is reserved for regime gates."""
         ev = surface.ev[None]
         w = self.weights(ev)
@@ -130,7 +137,7 @@ class FixedCellPolicy(TradePolicy):
 
     def weights(self, ev):
         w = np.zeros_like(ev)
-        side = ev[:, :, self.a, self.b].argmax(1)          # the only choice made
+        side = ev[:, :, self.a, self.b].argmax(1)          # 只选方向 / The only choice made.
         w[np.arange(len(ev)), side, self.a, self.b] = 1.0
         return w
 
@@ -143,7 +150,7 @@ class ArgmaxEVPolicy(TradePolicy):
 
 
 def local_stats(ev: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Mean and std of each cell's 3x3 neighbourhood within its own side."""
+    """计算同方向每单元 3×3 邻域均值和标准差。 / Mean and std of each cell's 3×3 same-side neighbourhood."""
     n, s, a, b = ev.shape
     pad = np.full((n, s, a + 2, b + 2), np.nan)
     pad[:, :, 1:-1, 1:-1] = ev
@@ -175,14 +182,14 @@ class SoftmaxEVPolicy(TradePolicy):
     def weights(self, ev):
         n, s, a, b = ev.shape
         w_side = _softmax(ev.reshape(n, s, -1), self.tau, axis=2).reshape(ev.shape)
-        side = (w_side * ev).sum((2, 3)).argmax(1)         # 2-way choice, not 40
+        side = (w_side * ev).sum((2, 3)).argmax(1)         # 仅二选一，不是四十选一 / Two-way, not 40-way.
         w = np.zeros_like(ev)
         w[np.arange(n), side] = w_side[np.arange(n), side]
         return w
 
 
 class MultiTPPolicy(TradePolicy):
-    """Partial exits across TP levels, one shared stop (no stop reconciliation)."""
+    """跨 TP 分批退出，共用同一止损。 / Partial TP exits with one shared stop."""
 
     def __init__(self, tau: float):
         self.tau = tau
@@ -190,8 +197,8 @@ class MultiTPPolicy(TradePolicy):
 
     def weights(self, ev):
         n, s, a, b = ev.shape
-        w_tp = _softmax(ev, self.tau, axis=2)              # across TPs, per (side, SL)
-        row_ev = (w_tp * ev).sum(2)                        # (n, side, SL): 8 rows
+        w_tp = _softmax(ev, self.tau, axis=2)              # 每方向/SL 跨 TP 加权 / Across TPs per side/SL.
+        row_ev = (w_tp * ev).sum(2)                        # 每方向/SL 一行 / One row per side/SL.
         best = row_ev.reshape(n, -1).argmax(1)
         side, sl = np.divmod(best, b)
         w = np.zeros_like(ev)
@@ -200,7 +207,7 @@ class MultiTPPolicy(TradePolicy):
 
 
 def preregistered(grid: dict) -> list[TradePolicy]:
-    """Fixed before any result was seen. Reported together; none is picked."""
+    """结果出现前固定参数；并列报告，不挑赢家。 / Preregister settings; report all without picking a winner."""
     return [
         FixedCellPolicy(grid, 0.010, 0.010),
         FixedCellPolicy(grid, 0.015, 0.010),
@@ -212,16 +219,16 @@ def preregistered(grid: dict) -> list[TradePolicy]:
     ]
 
 
-# --- matrix <-> cubes ---------------------------------------------------------
+# --- 矩阵与立方体 / matrix and cubes -----------------------------------------
 
 @dataclass
 class Cubes:
     ts: np.ndarray
     fold: np.ndarray
-    ev: np.ndarray        # (n, 2, n_tp, n_sl), calibrated, net of costs
-    net: np.ndarray       # realised net return of each cell
+    ev: np.ndarray        # 已校准且扣成本的 EV / Calibrated cost-net EV.
+    net: np.ndarray       # 每单元已实现净收益 / Realised net return per cell.
     gross: np.ndarray
-    dropped: int          # bars lacking a full matrix (ambiguous cells)
+    dropped: int          # 矩阵不全的 K 线（歧义单元） / Bars lacking full matrices.
 
 
 def to_cubes(long: pd.DataFrame, grid: dict) -> Cubes:
@@ -245,7 +252,7 @@ def to_cubes(long: pd.DataFrame, grid: dict) -> Cubes:
                  int((~complete).sum()))
 
 
-# --- evaluation ---------------------------------------------------------------
+# --- 评估 / evaluation ------------------------------------------------------
 
 def evaluate(policy: TradePolicy, c: Cubes) -> pd.DataFrame:
     w = policy.weights(c.ev)
@@ -262,7 +269,9 @@ def evaluate(policy: TradePolicy, c: Cubes) -> pd.DataFrame:
 
 def calibrate_ev(frame: pd.DataFrame, horizon_bars: int = 16,
                  min_train_samples: int = 2) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Fit ``net = a + b * pred`` using strictly earlier folds.
+    """仅用之前的折拟合 net = a + b * pred。 / Fit using strictly earlier folds.
+
+    原始 score 保持不变用于排序；calibrated_pred 仅用于金额解释和报告。
 
     The original ``score`` remains untouched and is still the selection/ranking
     field.  ``calibrated_pred`` is reporting/economic-value metadata only.
@@ -302,7 +311,9 @@ def calibrate_ev(frame: pd.DataFrame, horizon_bars: int = 16,
 
 def metrics(frame: pd.DataFrame, n_universe: int, universe_days: np.ndarray,
             horizon_bars: int) -> dict[str, Any]:
-    """Standardised accounting: every selected bar opens 1/horizon of equity, so
+    """标准化账本：每个选中 K 线开仓权益的 1/horizon，因此总敞口不超过 1 倍。
+
+    Standardised accounting: every selected bar opens 1/horizon of equity, so
     gross exposure never exceeds 1x however densely signals arrive."""
     n = len(frame)
     if n == 0:
@@ -313,7 +324,7 @@ def metrics(frame: pd.DataFrame, n_universe: int, universe_days: np.ndarray,
     se = np.sqrt((cl ** 2).sum()) / n
     f = 1.0 / horizon_bars
     daily = (frame.groupby("day")["net"].sum() * f).reindex(universe_days, fill_value=0.0)
-    equity = (1.0 + daily).cumprod()                   # compounded book
+    equity = (1.0 + daily).cumprod()                   # 复利账本 / Compounded book.
     wins, losses = r[r > 0].sum(), -r[r < 0].sum()
     var_p = p.var()
     if "calibrated_pred" in frame:
@@ -354,7 +365,7 @@ def deciles(frame: pd.DataFrame, pred_col: str = "pred") -> pd.DataFrame:
                          "realised_bps": g["net"].mean() * 1e4, "n": g.size()})
 
 
-# --- report -----------------------------------------------------------------
+# --- 报告 / report ---------------------------------------------------------
 
 COVERAGE = (1.0, 0.5, 0.2, 0.1, 0.05)
 SHOWCASE = ("fixed tp1.50% sl1.00%", "argmax EV", "local-robust lambda=1",

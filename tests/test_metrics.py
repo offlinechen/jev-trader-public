@@ -1,4 +1,7 @@
-"""Metric guards.
+"""指标保护测试。 / Metric guards.
+
+不同障碍单元的基础概率使混合 AUC 虚高；即使没有特征的气候学基线也会受益。
+本测试固定这一陷阱，防止把网格几何误当模型能力。
 
 The first test exists because pooled AUC across the barrier grid fooled us
 once: climatology, which has no features, scores ~0.78 pooled purely because
@@ -21,12 +24,12 @@ from jev_trader.metrics import ece, evaluate, multiclass_brier
 
 def test_pooled_auc_is_inflated_by_cell_structure():
     rng = np.random.default_rng(0)
-    base_rates = [0.40, 0.20, 0.10, 0.02]   # like tp=0.5% .. 3%
+    base_rates = [0.40, 0.20, 0.10, 0.02]   # 类似 TP 0.5%–3% / Like TP 0.5%–3%.
     y, p, cell = [], [], []
     for j, r in enumerate(base_rates):
         n = 5000
         y.append(rng.random(n) < r)
-        p.append(np.full(n, r))             # constant within cell: zero skill
+        p.append(np.full(n, r))             # 单元内常数，无预测力 / Constant within cell; no skill.
         cell.append(np.full(n, j))
     y = np.concatenate(y).astype(int)
     p = np.concatenate(p)

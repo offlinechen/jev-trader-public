@@ -1,4 +1,4 @@
-"""Minimal Freqtrade adapter for persisted diagnostic signals."""
+"""持久化诊断信号的最小 Freqtrade 适配器。 / Minimal Freqtrade adapter for persisted diagnostic signals."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ ENTRY_GRACE_MS = 60 * 1000
 
 
 class JevSignalStore(IStrategy):
-    """Reads approved candidate rows; no Jev calls and no signal generation."""
+    """仅读取获准的候选行，不调用 Jev 或生成信号。 / Read approved rows; no Jev calls or signal generation."""
 
     INTERFACE_VERSION = 3
     timeframe = "15m"
@@ -33,7 +33,7 @@ class JevSignalStore(IStrategy):
         return dataframe
 
     def _exchange_matches(self) -> bool:
-        """Require an explicit exchange identity and reject config/env drift."""
+        """要求明确的交易所身份并拒绝配置漂移。 / Require exchange identity; reject config/env drift."""
         expected = os.environ.get("JEV_SIGNAL_EXCHANGE", "").lower()
         configured = (self.config.get("exchange") or {}).get("name", "").lower()
         return bool(expected and configured and configured == expected)
@@ -65,9 +65,8 @@ class JevSignalStore(IStrategy):
                 "FROM signal_run_provenance WHERE run_id=?", (run_id,),
             ).fetchone()
 
-        # v4 must be positively marked as live market data. For legacy v3 DBs,
-        # absence of the new table/row remains compatible; explicit exclusions
-        # always fail closed.
+        # v4 必须标记真实行情；旧 v3 可缺来源行。 / v4 needs live-market provenance; legacy v3 may lack the row.
+        # 明确排除时一律拒绝。 / Explicit exclusions always fail closed.
         is_v4 = expected[-1] == "jev-ohlcv-v4"
         if is_v4:
             return provenance == ("live_market", 0)
@@ -78,7 +77,7 @@ class JevSignalStore(IStrategy):
         proposed_leverage: float, max_leverage: float, entry_tag: str | None,
         side: str, **kwargs,
     ) -> float:
-        """Keep the diagnostic Freqtrade path at 1x on every supported venue."""
+        """所有交易所的诊断路径均限制为 1 倍杠杆。 / Keep diagnostic Freqtrade leverage at 1x."""
         return 1.0
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -132,7 +131,7 @@ class JevSignalStore(IStrategy):
         time_in_force: str, current_time: datetime, entry_tag: str | None,
         side: str, **kwargs,
     ) -> bool:
-        """Recheck the exact signal immediately before Freqtrade submits entry."""
+        """Freqtrade 提交入场前再次核对精确信号。 / Recheck the exact signal immediately before entry."""
         try:
             prefix, raw_ts = (entry_tag or "").rsplit(":", 1)
             signal_ts = int(raw_ts)

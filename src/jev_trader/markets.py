@@ -1,4 +1,4 @@
-"""Public perpetual-market candle adapters with one canonical validation path."""
+"""永续合约公开 K 线适配器，共用严格校验。 / Public perpetual-candle adapters with shared validation."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ _OKX_LAST_REQUEST = 0.0
 
 
 def normalize_pair(exchange: str, value: str) -> tuple[str, str]:
-    """Return the shared CCXT-style pair and exchange-native perpetual symbol."""
+    """返回统一交易对和交易所原生合约代码。 / Return CCXT-style pair and exchange-native symbol."""
     exchange = exchange.lower()
     value = value.upper()
     if exchange not in {"binance", "okx"}:
@@ -46,7 +46,8 @@ def normalize_pair(exchange: str, value: str) -> tuple[str, str]:
 
 def _public_json(base_url: str, path: str, params: dict[str, str | int]) -> object:
     url = base_url + path + ("?" + urllib.parse.urlencode(params) if params else "")
-    with urllib.request.urlopen(url, timeout=10) as response:
+    request = urllib.request.Request(url, headers={"User-Agent": "jev-trader/0.1"})
+    with urllib.request.urlopen(request, timeout=10) as response:
         return json.load(response)
 
 
@@ -81,7 +82,7 @@ def server_time_ms(exchange: str, fetch_json=None) -> int:
 def validate_closed_bars(frame: pd.DataFrame, server_ms: int, *,
                          required_bars: int = WARMUP_BARS,
                          exchange: str = "market") -> pd.DataFrame:
-    """Canonical strict OHLCV checks; optional source fields are preserved."""
+    """严格校验 OHLCV，保留可选来源字段。 / Strict OHLCV checks while preserving optional source fields."""
     required = ["ts", "open", "high", "low", "close", "volume"]
     if any(column not in frame for column in required):
         raise ValueError(f"{exchange} candle fields are incomplete")
@@ -158,11 +159,11 @@ def _okx_bars(native_symbol: str, server_ms: int, fetch_json,
             page_rows.append({
                 "ts": ts, "open": float(candle[1]), "high": float(candle[2]),
                 "low": float(candle[3]), "close": float(candle[4]),
-                # Derivatives: vol is contract count; volCcy is base currency.
+                # 衍生品的 vol 为合约张数，volCcy 为基础币数量。 / Derivatives: vol is contracts; volCcy is base currency.
                 "volume": float(candle[6]),
             })
         rows.extend(page_rows)
-        # OKX `after` requests data older than this timestamp.
+        # OKX 的 `after` 请求此时间戳之前的数据。 / OKX `after` requests older data.
         next_cursor = str(min(int(row[0]) for row in page))
         if next_cursor in seen_cursors or next_cursor == after:
             raise ValueError("OKX candle pagination did not advance")
@@ -180,7 +181,7 @@ def _okx_bars(native_symbol: str, server_ms: int, fetch_json,
 
 
 def fetch_closed_bars(exchange: str, pair: str, server_ms: int, fetch_json=None) -> pd.DataFrame:
-    """Fetch and validate a continuous closed 15m window from public endpoints."""
+    """从公开端点获取并校验连续已收盘 15m K 线。 / Fetch and validate continuous closed 15m candles."""
     exchange = exchange.lower()
     _, native = normalize_pair(exchange, pair)
     if exchange == "binance":

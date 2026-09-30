@@ -1,4 +1,4 @@
-"""Shared barrier-cell keys and monotone barrier-surface projection."""
+"""共享障碍单元键与单调概率面投影。 / Shared barrier-cell keys and monotone surface projection."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def sl_key(side: str, tp: float, sl: float) -> str:
 
 
 def _pava(values: np.ndarray, *, increasing: bool) -> np.ndarray:
-    """Return the closest 1-D isotonic sequence using unit weights."""
+    """以单位权重求最近的一维单调序列。 / Return the nearest 1-D isotonic sequence with unit weights."""
     values = np.asarray(values, dtype=float)
     sign = 1.0 if increasing else -1.0
     blocks: list[list[float]] = []
@@ -50,17 +50,17 @@ def _project_surface(matrix: np.ndarray, *, rows_increasing: bool, columns_incre
 
 
 def project_tp_surface(matrix: np.ndarray, rounds: int = 3) -> np.ndarray:
-    """Project TP probability: farther SL helps, farther TP hurts."""
+    """投影 TP 概率：SL 越远越高，TP 越远越低。 / Project TP probability: farther SL helps, farther TP hurts."""
     return _project_surface(matrix, rows_increasing=True, columns_increasing=False, rounds=rounds)
 
 
 def project_sl_surface(matrix: np.ndarray, rounds: int = 3) -> np.ndarray:
-    """Project SL probability: farther TP helps, farther SL hurts."""
+    """投影 SL 概率：TP 越远越高，SL 越远越低。 / Project SL probability: farther TP helps, farther SL hurts."""
     return _project_surface(matrix, rows_increasing=False, columns_increasing=True, rounds=rounds)
 
 
 def project_barrier_surfaces(tp_matrix: np.ndarray, sl_matrix: np.ndarray, rounds: int = 3):
-    """Project both surfaces without clipping or silently normalizing them."""
+    """投影两个概率面，不裁剪或静默归一化。 / Project both surfaces without clipping or silent normalization."""
     projected_tp = project_tp_surface(tp_matrix, rounds=rounds)
     projected_sl = project_sl_surface(sl_matrix, rounds=rounds)
     probability_sum = projected_tp + projected_sl
@@ -68,5 +68,5 @@ def project_barrier_surfaces(tp_matrix: np.ndarray, sl_matrix: np.ndarray, round
 
 
 def project_monotone(matrix: np.ndarray, reverse: bool = False) -> np.ndarray:
-    """Compatibility wrapper; new callers should use named surface functions."""
+    """兼容包装；新调用方应使用具名投影函数。 / Compatibility wrapper; new callers should use named functions."""
     return project_sl_surface(matrix) if reverse else project_tp_surface(matrix)

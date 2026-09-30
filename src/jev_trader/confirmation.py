@@ -1,4 +1,4 @@
-"""Matched, fold-aware G3b ranking confirmation; no strategy or PnL tuning."""
+"""严格匹配且按折感知的 G3b 排序确认；不调策略或盈亏。 / Matched fold-aware G3b ranking confirmation."""
 
 from __future__ import annotations
 
@@ -130,7 +130,7 @@ def _day_bootstrap(frame: pd.DataFrame, n: int, seed: int) -> dict[str, tuple[fl
 def evaluate_frames(jev: pd.DataFrame, baseline: pd.DataFrame, *, horizon_bars: int,
                    n_boot: int = 400, seed: int = 20260921,
                    min_train: int = 50) -> dict:
-    """Return G3b metrics on the exact Jev/LGBM/stack triple intersection."""
+    """在 Jev/LGBM/stack 完全相同的样本交集上计算指标。 / Score the exact three-model intersection."""
     required_j = set(KEYS) - {"fold"} | {"p_tp", "p_sl", "prob_invalid"}
     required_b = set(KEYS) | {"p_tp_first", "p_sl_first", "p_timeout"}
     if missing := required_j - set(jev):
@@ -295,7 +295,7 @@ def evaluate_frames(jev: pd.DataFrame, baseline: pd.DataFrame, *, horizon_bars: 
 
 def run(predictions: str, data_dir: str = "data", out: str = "docs/confirmation_report.md",
         n_boot: int = 400) -> Path:
-    """Evaluate only a complete, manifest-verified 10k+ G3b run."""
+    """只评估清单核验完整的至少 1 万样本 G3b 运行。 / Evaluate only complete manifest-verified 10k+ runs."""
     cfg = config.load()
     path = Path(predictions)
     frame = pd.read_parquet(path)

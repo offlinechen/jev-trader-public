@@ -1,4 +1,4 @@
-"""Run a reproducible real-request Jev cost meter over labelled 15m bars."""
+"""在带标签的 15m K 线上运行可复现的 Jev 真实请求计量。 / Reproducible real-request Jev meter."""
 
 from __future__ import annotations
 
@@ -24,15 +24,15 @@ from .jev import (
     canonical_hash, canonical_request_identity,
 )
 
-# Measured on 5,916 successful v3 requests (G3a + partial G3b): $0.000284/bar.
-# Only the default for pre-flight projection; the ledger charges real cost.
+# 5916 次成功 v3 请求测得约 $0.000284/根；仅用于运行前估算，账本按实际费用。
+# Measured on 5,916 successful v3 calls; only a preflight default, not the ledger charge.
 DEFAULT_EST_COST_PER_REQUEST = 0.000284
 METER_IDENTITY_VERSION = 3
 
 
 def _health_stop_reason(outcomes: list[bool], *, minimum: int = 10,
                         window: int = 20, max_invalid_rate: float = 0.25) -> str | None:
-    """Stop a metering tranche when recent billed responses fail schema validation."""
+    """近期已计费响应格式失败过多时停止批次。 / Stop a tranche on excessive billed schema failures."""
     recent = outcomes[-window:]
     if len(recent) < minimum:
         return None
@@ -184,7 +184,7 @@ def _replay_response(event: dict, questions: dict, request_state_hash: str):
 
 def _cache_response_for_attempt(path: Path, sample_index: int,
                                 attempt_events: list[dict]) -> dict | None:
-    """Use a cache entry only when its mtime proves it came from this attempt."""
+    """仅当修改时间能证明缓存来自本次请求时才复用。 / Use cache only when mtime proves this attempt."""
     if not path.is_file():
         return None
     reservations = {
@@ -261,7 +261,7 @@ def _read_attempt_wal(path: Path, run_id: str) -> list[dict]:
         try:
             event = json.loads(line)
         except ValueError:
-            continue  # a torn final append was never fsynced and never sent
+            continue  # 尾部半写记录未 fsync，也未发送 / Torn final append was not fsynced or sent.
         if not isinstance(event, dict):
             continue
         if event.get("run_id") != run_id:
@@ -335,8 +335,8 @@ def _attempt_wal_state(events: list[dict], max_requests: int, max_usd: float,
                 by_status[status] = by_status.get(status, 0) + 1
         event_seq = max((int(event["event_seq"]) for event in ordered), default=cutoff)
     else:
-        # Legacy WALs have no common checkpoint/event sequence. Keep the checkpoint
-        # as the baseline, repairing its identifiable in-flight attempts only.
+        # 旧 WAL 没有统一事件序号；以 checkpoint 为准，只修复可识别的在途请求。
+        # Legacy WAL lacks shared sequencing; trust checkpoint and repair identifiable inflight attempts.
         base_inflight = max(0, base_attempts - sum(int(v) for v in by_status.values()))
         residual = max(0.0, committed - actual - estimated)
         settled_before_base = sorted(
@@ -385,7 +385,7 @@ def _recover_missing_settlements(events: list[dict], response_events: list[dict]
                                 max_requests: int, max_usd: float,
                                 est_cost_per_request: float,
                                 base: dict | None = None) -> list[dict]:
-    """Build durable settle events for journaled 2xx responses absent from the WAL."""
+    """为已记录但 WAL 缺失的 2xx 响应构建持久结算事件。 / Settle journaled 2xx responses absent from WAL."""
     working = list(events)
     reserves = {int(event["attempt"]): event for event in working if event["event"] == "reserve"}
     settled = {int(event["attempt"]) for event in working if event["event"] == "settle"}
@@ -441,7 +441,7 @@ def _recover_missing_settlements(events: list[dict], response_events: list[dict]
 
 def _attach_current_outcomes(frame: pd.DataFrame, labels_by_ts: pd.DataFrame,
                              grid: dict) -> pd.DataFrame:
-    """Derive labels from the current artifact; inference checkpoints stay label-free."""
+    """从当前产物派生标签，推理 checkpoint 不保存标签。 / Derive labels from artifact, not inference checkpoints."""
     out = frame.copy()
     for side in ("long", "short"):
         for tp in grid["tp"]:
@@ -460,7 +460,7 @@ def _attach_current_outcomes(frame: pd.DataFrame, labels_by_ts: pd.DataFrame,
 def _run_identity(n: int, seed: int, symbol: str, client: JevClient, workers: int,
                   use_cache: bool, grid: dict, candidate_ts: np.ndarray,
                   picked_ts: np.ndarray, request_identities: list[dict]) -> tuple[dict, str]:
-    del workers, use_cache  # execution choices do not change request semantics
+    del workers, use_cache  # 执行方式不改变请求语义 / Execution choices do not alter request semantics.
     picked = [
         {"sample_index": index, "ts": int(ts)}
         for index, ts in enumerate(np.asarray(picked_ts, dtype=np.int64), start=1)
@@ -497,7 +497,7 @@ def _run_identity(n: int, seed: int, symbol: str, client: JevClient, workers: in
 
 def _g3b_candidate_timestamps(data_dir: Path, features: pd.DataFrame,
                              labels: pd.DataFrame, grid: dict) -> tuple[np.ndarray, dict]:
-    """Bars with features, labels, and complete matched OOF rows for all baselines."""
+    """同时具备特征、标签和所有基线完整匹配 OOF 行的 K 线。 / Bars with features, labels, and matched OOF."""
     models = {"climatology", "logit", "lgbm"}
     cell_keys = {
         (side, round(float(tp), 6), round(float(sl), 6))
@@ -588,7 +588,7 @@ def _g3b_candidate_timestamps(data_dir: Path, features: pd.DataFrame,
 
 
 def _historic_attempts(data_dir: Path) -> tuple[set[int], int]:
-    """Known prior timestamps; legacy failures without timestamps are counted separately."""
+    """已知历史时间戳；无时间戳的旧失败单独计数。 / Prior timestamps; count untimed legacy failures separately."""
     timestamps: set[int] = set()
     unattributed = 0
     for n in (100, 2000, 10000):
@@ -633,7 +633,9 @@ def _load_or_create_manifest(path: Path, identity: dict, run_id: str) -> dict:
 
 def _append_ledger(out_dir: Path, n: int, seed: int, client: JevClient, status: str,
                    run_id: str) -> None:
-    """Append-only spend record. Reports and artifacts are overwritten when a
+    """只追加的支出账本；同身份重跑会覆盖报告与产物，但账本保留每次计费记录。
+
+    Append-only spend record. Reports and artifacts are overwritten when a
     run is repeated at the same n, which erases the earlier run's cost; this
     file never is, so every billed run stays on the books."""
     entry = {
@@ -649,7 +651,7 @@ def _append_ledger(out_dir: Path, n: int, seed: int, client: JevClient, status: 
 
 
 def preflight(pending: int, max_requests: int, max_usd: float, est: float) -> dict:
-    """Plan this budget tranche; the hard Budget guard stops and resumes at the cap."""
+    """规划本次预算批次；硬上限由 Budget 在发送前执行。 / Plan tranche; Budget enforces caps before sending."""
     if pending < 0 or max_requests < 0 or max_usd < 0 or est <= 0:
         raise JevBudgetError("pending work and remaining caps must be non-negative")
     allowance = min(pending, max_requests, int((max_usd + 1e-12) / est))
@@ -936,8 +938,8 @@ def run(n: int = 100, seed: int = 20260921, eligible_ts: np.ndarray | None = Non
                 request_context={"run_id": run_id, "sample_index": index},
             )
         except (JevBudgetError, JevJournalError):
-            raise            # not a bar failure: the run stops, the bar stays pending
-        except Exception as exc:  # preserve the failed bar in the audit trail
+            raise            # 非单根失败，运行停止且 K 线待处理 / Stop run; keep bar pending.
+        except Exception as exc:  # 将失败 K 线留在审计轨迹 / Preserve failed bar in audit trail.
             failure_kind = "schema" if isinstance(exc, JevSchemaError) else "request"
             null_record = {
                 "sample_index": index,
@@ -1043,8 +1045,8 @@ def run(n: int = 100, seed: int = 20260921, eligible_ts: np.ndarray | None = Non
                     journal_stop = exc
                 if stopped is not None or journal_stop is not None:
                     for other in futures:
-                        other.cancel()           # queued bars never send
-                continue                         # in-flight ones still land below
+                        other.cancel()           # 队列中 K 线不发送 / Queued bars never send.
+                continue                         # 在途响应仍会收尾 / In-flight responses still finish below.
             if record is not None:
                 _append_checkpoint(checkpoint_path, {
                     "sample_index": record["sample_index"],
@@ -1092,8 +1094,8 @@ def run(n: int = 100, seed: int = 20260921, eligible_ts: np.ndarray | None = Non
         "stopped_reason": health_stop,
     }
     if stopped is not None:
-        # Paid-for results are checkpointed; unsent bars stay pending, so the
-        # same command resumes once the caps are raised deliberately.
+        # 已付费结果进入 checkpoint，未发送 K 线保持待处理；提高上限后同命令可续跑。
+        # Paid results are checkpointed; unsent bars remain pending for deliberate resumption.
         _write_json_atomic(manifest_path, manifest)
         raise JevBudgetError(f"run stopped locally by budget guard: {stopped}")
     if journal_stop is not None:

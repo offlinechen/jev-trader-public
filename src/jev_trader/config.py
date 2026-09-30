@@ -13,5 +13,5 @@ def load(path: str | Path = DEFAULT) -> dict:
 
 
 def to_binance(symbol: str) -> str:
-    """'BTC/USDT:USDT' -> 'BTCUSDT' (archive and REST naming)."""
+    """将统一交易对转为 Binance 归档/REST 代码。 / Convert a pair to Binance archive/REST naming."""
     return symbol.split(":")[0].replace("/", "")

@@ -1,4 +1,8 @@
-"""Selective-trading evaluation: does "trade less, trade better" hold?
+"""选择性交易评估：少交易是否真的更好？ / Does "trade less, trade better" hold?
+
+先按过去已结算折校准三类概率，再估计超时收益、逐单元 EV 和实际首触净收益。
+诊断覆盖率使用全期分数，只检验排序；可交易的滚动覆盖率只用过去折确定门槛。
+由于同根及相邻 K 线标签相关，所有不确定性按整日聚类。
 
 Pipeline, all walk-forward and all causal:
 
@@ -48,10 +52,10 @@ from .splits import BAR_MS, resolved_before
 MIN_MS = 60_000
 DAY_MS = 86_400_000
 COVERAGE = (1.0, 0.5, 0.3, 0.2, 0.1, 0.05, 0.02, 0.01)
-PROB = ("p_sl_first", "p_tp_first", "p_timeout")          # index == Outcome value
+PROB = ("p_sl_first", "p_tp_first", "p_timeout")          # 索引对应 Outcome / Index equals Outcome value.
 
 
-# --- inputs -----------------------------------------------------------------
+# --- 输入 / inputs ----------------------------------------------------------
 
 def load_oof(data_dir: str | Path, model: str) -> pd.DataFrame:
     df = pd.read_parquet(Path(data_dir) / "oof", filters=[("model", "==", model)])
@@ -62,7 +66,9 @@ def load_oof(data_dir: str | Path, model: str) -> pd.DataFrame:
 
 
 def from_jev_long(path: str | Path, fold_of_ts: pd.Series) -> pd.DataFrame:
-    """Adapt g3a's long Jev frame to the OOF schema, attaching baseline folds.
+    """将 G3a Jev 长表适配到 OOF 格式，并附上基线折。 / Adapt Jev rows to OOF schema with baseline folds.
+
+    原始 TP+SL 超过 1 的概率向量无效，直接剔除而不修复。
 
     Rows whose raw TP+SL exceed 1 carry a negative implied timeout; they are
     invalid probability vectors and are dropped, not repaired.
@@ -91,7 +97,7 @@ def _observation_hash(frame: pd.DataFrame) -> str:
 
 
 def _stack_oof(lgbm: pd.DataFrame, jev: pd.DataFrame, horizon_bars: int) -> pd.DataFrame:
-    """Build fold-OOS stack probabilities from the two registered inputs."""
+    """用两个预注册输入构建折外 stack 概率。 / Build fold-OOS stack probabilities from registered inputs."""
     keys = MATCH_KEYS
     merged = lgbm.merge(jev, on=keys, suffixes=("_base", "_jev"), validate="one_to_one")
     rows = []
@@ -128,7 +134,7 @@ def _stack_oof(lgbm: pd.DataFrame, jev: pd.DataFrame, horizon_bars: int) -> pd.D
 
 
 def matched_oof(data_dir: str | Path, horizon_bars: int) -> tuple[dict[str, pd.DataFrame], dict]:
-    """Load lgbm/Jev/stack on one strict, order-independent observation set."""
+    """在严格相同且不依赖行序的样本集加载三模型。 / Load all three models on an order-independent matched set."""
     data_dir = Path(data_dir)
     lgbm = load_oof(data_dir, "lgbm")
     fold_of_ts = lgbm.drop_duplicates("ts").set_index("ts")["fold"]
@@ -169,7 +175,7 @@ def matched_oof(data_dir: str | Path, horizon_bars: int) -> tuple[dict[str, pd.D
     return matched, meta
 
 
-# --- steps 1-3 --------------------------------------------------------------
+# --- 步骤 1–3 / steps 1–3 ----------------------------------------------------
 
 def calibrate(df: pd.DataFrame, horizon_bars: int, min_prior_folds: int = 3,
               max_fit: int = 500_000, seed: int = 0) -> pd.DataFrame:
@@ -182,8 +188,8 @@ def calibrate(df: pd.DataFrame, horizon_bars: int, min_prior_folds: int = 3,
         if len(np.unique(fold[prior])) < min_prior_folds:
             continue
         idx = np.flatnonzero(prior)
-        # ponytail: subsample the fit set; isotonic on 500k rows is already
-        # far past the resolution a 10-bin reliability check can see.
+        # ponytail: 拟合集抽样；50 万行远超十箱可靠性检查可分辨的精度。
+        # Subsample fitting; 500k rows exceed the resolution of a 10-bin reliability check.
         if len(idx) > max_fit:
             idx = rng.choice(idx, max_fit, replace=False)
         cur = fold == k
@@ -222,10 +228,12 @@ def add_ev(df: pd.DataFrame, costs: dict) -> pd.DataFrame:
     return df.assign(ev=ev, conf=conf)
 
 
-# --- steps 4-5 --------------------------------------------------------------
+# --- 步骤 4–5 / steps 4–5 ----------------------------------------------------
 
 def realise(frame: pd.DataFrame, labels: pd.DataFrame, costs: dict, horizon_bars: int) -> pd.DataFrame:
-    """Actual first-touch payoff of every row's (side, tp, sl) cell.
+    """计算每行方向/TP/SL 单元的真实首触收益。 / Actual first-touch payoff for each cell.
+
+    TP 盈利、SL 亏损或到期终值，按实际持仓时间扣成本；所有政策共用此实现。
 
     +TP, -SL, or the signed terminal return at the horizon; cost charged at the
     *actual* holding time. Works on the full long matrix or on any subset of it,
@@ -250,7 +258,7 @@ def realise(frame: pd.DataFrame, labels: pd.DataFrame, costs: dict, horizon_bars
             [yy == lab.Outcome.TP_FIRST, yy == lab.Outcome.SL_FIRST],
             [tp_t + 1, sl_t + 1], horizon_min)
     friction = 2 * costs["taker_fee"] + 2 * costs["half_spread"] + costs["slippage"]
-    cost = friction + costs["funding_per_8h"] * hold / 60 / 8   # == _round_trip_cost, vectorised
+    cost = friction + costs["funding_per_8h"] * hold / 60 / 8   # 往返成本向量化 / Vectorised round-trip cost.
     return out.drop(columns=touch[1:]).assign(hold_min=hold, gross=gross, net=gross - cost)
 
 
@@ -272,10 +280,10 @@ def per_bar(df: pd.DataFrame, labels: pd.DataFrame, costs: dict, horizon_bars: i
     return best[keep]
 
 
-# --- statistics -------------------------------------------------------------
+# --- 统计 / statistics ------------------------------------------------------
 
 def summarise(bars: pd.DataFrame) -> dict:
-    """Mean realised net return with a day-clustered CI and effective sample size."""
+    """平均净收益、整日聚类 CI 与有效样本量。 / Mean net return, day-clustered CI, and effective sample size."""
     n = len(bars)
     if n == 0:
         return {"trades": 0, "days": 0, "ess": 0.0, "win_rate": np.nan, "timeout_rate": np.nan,
@@ -300,7 +308,7 @@ def summarise(bars: pd.DataFrame) -> dict:
 
 
 def non_overlapping(bars: pd.DataFrame) -> pd.DataFrame:
-    """One position at a time: skip a signal while the previous trade is open."""
+    """单仓限制：前一交易未平时跳过信号。 / One position at a time; skip overlapping signals."""
     s = bars.sort_values("ts")
     keep, busy_until = [], -1
     for i, entry, exit_ in zip(s.index, s["entry_ts"].to_numpy(), s["exit_ts"].to_numpy()):
@@ -311,7 +319,9 @@ def non_overlapping(bars: pd.DataFrame) -> pd.DataFrame:
 
 
 def universe(bars: pd.DataFrame, horizon_bars: int, min_prior_folds: int = 3) -> pd.DataFrame:
-    """Bars in folds that have enough resolved history to set a causal cut-off.
+    """保留有足够已结算历史可设因果门槛的折。 / Folds with enough resolved history for a causal cut-off.
+
+    两种覆盖率模式共用这个样本集，仅门槛来源不同。
 
     Both coverage modes are evaluated on exactly this set, so the only
     difference between them is where the cut-off comes from.
@@ -326,7 +336,9 @@ def universe(bars: pd.DataFrame, horizon_bars: int, min_prior_folds: int = 3) ->
 
 def select(bars: pd.DataFrame, score: str, coverage: float, mode: str,
            horizon_bars: int, eligible: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Top `coverage` of the universe by `score`.
+    """按 score 选取样本集的最高 coverage 部分。 / Top coverage of the universe by score.
+
+    diagnostic 用全期门槛，只可诊断排序；walk_forward 只用过去已结算折，可用于交易检验。
 
     diagnostic: one cut-off from the whole universe (uses the future; ranking only).
     walk_forward: each fold's cut-off from resolved earlier bars only (tradeable).
@@ -369,13 +381,15 @@ def breakdown(bars: pd.DataFrame, by) -> pd.DataFrame:
 
 
 def ev_deciles(bars: pd.DataFrame) -> pd.DataFrame:
-    """Is predicted EV itself calibrated? Realised net by predicted-EV decile."""
+    """按预测 EV 十分位比较已实现净收益，检查 EV 校准。 / Realised net by predicted-EV decile."""
     q = pd.qcut(bars["ev"], 10, labels=False, duplicates="drop")
     return breakdown(bars.assign(ev_decile=q), ["ev_decile"])
 
 
 def agreement(a: pd.DataFrame, b: pd.DataFrame, horizon_bars: int, strong: float = 0.2) -> pd.DataFrame:
-    """Bucket model A's trades by what model B says on the same bar.
+    """按模型 B 对同根 K 线的判断给模型 A 交易分组。 / Bucket A's trades by B's view of the same bar.
+
+    强信号门槛由过去折滚动确定，不使用未来分数；负 EV 视为观望。
 
     Direction is the side of each model's best cell when its best EV is positive,
     otherwise flat. "Strong" is the walk-forward top `strong` fraction by EV, so
@@ -398,7 +412,7 @@ def agreement(a: pd.DataFrame, b: pd.DataFrame, horizon_bars: int, strong: float
     return breakdown(m, ["bucket"])
 
 
-# --- driver -----------------------------------------------------------------
+# --- 驱动 / driver ---------------------------------------------------------
 
 def build(df: pd.DataFrame, labels: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     h = cfg["grid"]["horizon_bars"]
@@ -408,7 +422,7 @@ def build(df: pd.DataFrame, labels: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     return per_bar(df, labels, cfg["costs"], h)
 
 
-# --- report -----------------------------------------------------------------
+# --- 报告 / report ---------------------------------------------------------
 
 RET_COLS = ("mean_pred_ev", "mean_net", "ci_lo", "ci_hi", "nonoverlap_mean_net")
 
@@ -427,7 +441,7 @@ def _bps(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def calibration_by(long: pd.DataFrame, by: str) -> pd.DataFrame:
-    """Predicted vs observed P(TP first), raw and calibrated, per group."""
+    """按组对比原始、校准和实际 TP 先触概率。 / Compare raw, calibrated, and observed TP-first probability."""
     rows = []
     for key, g in long.groupby(by, observed=True):
         obs = float((g["outcome"] == lab.Outcome.TP_FIRST).mean())

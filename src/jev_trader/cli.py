@@ -121,7 +121,7 @@ def cmd_audit_spend(args, cfg):
     from .jev import _read_dotenv
 
     root = Path(__file__).resolve().parents[2]
-    env = {**_read_dotenv(root / ".env"), **os.environ}   # key is never printed
+    env = {**_read_dotenv(root / ".env"), **os.environ}   # 不打印密钥 / Never print the key.
     text, _ = run(
         root, env.get("JEV_API_KEY"), env.get("JEV_BASE_URL"),
         env.get("OPENROUTER_MANAGEMENT_KEY"),
@@ -188,7 +188,7 @@ def cmd_shadow(args, cfg):
         raise ValueError("--dry-run-trades requires --live-jev")
     while True:
         if args.watch:
-            # Run just after the next 15m close; run_once rejects stale bars.
+            # 下根 15m 收盘后运行；run_once 拒绝过期 K 线。 / Run after close; reject stale bars.
             now = time.time()
             time.sleep(max(0, (int(now // 900) + 1) * 900 + 2 - now))
         for row in run_once(

@@ -1,4 +1,4 @@
-"""One-request live contract test; opt in with JEV_LIVE=1."""
+"""单次真实付费请求契约测试；仅 JEV_LIVE=1 时运行。 / Opt-in one-request live contract test."""
 
 from __future__ import annotations
 

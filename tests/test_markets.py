@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import io
+
 import pytest
 
+import jev_trader.markets as markets
 from jev_trader.features import BAR_MS
 from jev_trader.markets import fetch_closed_bars, normalize_pair, validate_closed_bars
 
@@ -10,6 +13,20 @@ def _okx_rows(server_ms: int, count: int = 500):
     last = server_ms // BAR_MS * BAR_MS - BAR_MS
     return [[str(last - i * BAR_MS), "100", "102", "99", "101", "12",
              "0.12", "12.12", "1"] for i in range(count)]
+
+
+def test_public_market_request_identifies_client(monkeypatch):
+    requests = []
+
+    def urlopen(request, timeout):
+        requests.append((request, timeout))
+        return io.BytesIO(b'{"ok": true}')
+
+    monkeypatch.setattr(markets.urllib.request, "urlopen", urlopen)
+    assert markets._public_json("https://example.test", "/time", {"x": 1}) == {"ok": True}
+    assert requests[0][0].get_header("User-agent") == "jev-trader/0.1"
+    assert requests[0][0].full_url == "https://example.test/time?x=1"
+    assert requests[0][1] == 10
 
 
 def test_pair_normalization_is_exchange_explicit():

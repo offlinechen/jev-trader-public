@@ -1,4 +1,7 @@
-"""T1.2 -- the highest-value test in the repository (NFR-1).
+"""T1.2：仓库最重要的因果性测试（NFR-1）。 / The highest-value causality test.
+
+特征 x[t] 在完整历史和截至 t 的截断历史上必须完全相同；
+合成随机游走即可运行，无需下载数据。测试还故意注入泄漏，确认检查能失败。
 
 Feature x[t] must be identical whether computed on the full history or on
 history[:t+1]. One assertion kills the whole class of lookahead bugs: rolling
@@ -21,7 +24,7 @@ from pandas.testing import assert_frame_equal
 
 from jev_trader.features import BAR_MS, build_features
 
-WARMUP = 400  # longest window: 20 * 16 bars for the 4h EMA
+WARMUP = 400  # 最长窗口：4h EMA 的 20×16 根 / Longest 4h EMA window.
 
 
 def synthetic(n: int = 2000, seed: int = 0) -> pd.DataFrame:
@@ -43,7 +46,7 @@ def synthetic(n: int = 2000, seed: int = 0) -> pd.DataFrame:
 
 
 def assert_causal(fn, df: pd.DataFrame, k: int = 40, seed: int = 1) -> None:
-    """Rebuild on truncated history at k random bars; demand an exact match."""
+    """随机抽取 k 根并在截断历史上重算，要求精确匹配。 / Rebuild k truncated histories; require exact matches."""
     full = fn(df).set_index("ts")
     rng = np.random.default_rng(seed)
     for i in rng.choice(np.arange(WARMUP, len(df)), k, replace=False):
@@ -55,7 +58,7 @@ def assert_causal(fn, df: pd.DataFrame, k: int = 40, seed: int = 1) -> None:
         )
 
 
-# --- the real thing --------------------------------------------------------
+# --- 正向检查 / real check --------------------------------------------------
 
 def test_build_features_is_causal():
     assert_causal(build_features, synthetic())
@@ -65,7 +68,7 @@ def test_build_features_is_causal_other_seed():
     assert_causal(build_features, synthetic(seed=7), seed=7)
 
 
-# --- the check has to be able to fail --------------------------------------
+# --- 检查必须能发现泄漏 / check must fail on leaks ---------------------------
 
 def _leaky_shift(df):
     f = build_features(df)
@@ -93,7 +96,7 @@ def test_detects_leak(leaky):
         assert_causal(leaky, synthetic())
 
 
-# --- sanity ----------------------------------------------------------------
+# --- 基础合理性 / sanity ----------------------------------------------------
 
 def test_features_are_populated_after_warmup():
     f = build_features(synthetic()).iloc[WARMUP:]
@@ -102,7 +105,9 @@ def test_features_are_populated_after_warmup():
 
 
 def test_mtf_context_uses_only_closed_bars():
-    """The 4h column may only change on the bar that closes a 4h bucket.
+    """4h 特征只能在对应 4h 桶收盘的 15m K 线上变化。
+
+    The 4h column may only change on the bar that closes a 4h bucket.
 
     A bucket opening at T closes at T + 16*BAR, which is the close time of the
     15m bar at T + 15*BAR -- so the step lands where (ts + BAR) % 16*BAR == 0.

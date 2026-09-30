@@ -1,4 +1,4 @@
-"""Small, testable client for OpenRouter's Jev Decisions API."""
+"""OpenRouter Jev Decisions API 的可测试轻量客户端。 / Small, testable Jev Decisions client."""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ Transport = Callable[[str, dict[str, str], bytes], tuple[int, bytes]]
 
 
 class JevError(RuntimeError):
-    """Base error for configuration, transport, and response failures."""
+    """配置、传输和响应错误的基类。 / Base error for configuration, transport, and response failures."""
 
 
 class JevConfigError(JevError):
@@ -67,23 +67,27 @@ class JevApiError(JevError):
 
 
 class JevSchemaError(JevApiError):
-    """A successful HTTP response whose content violates the Decisions schema."""
+    """HTTP 成功但内容不符合 Decisions 格式。 / Successful HTTP response violating Decisions schema."""
 
 
 class JevBudgetError(JevError):
-    """The local spend guard tripped. Never retried; the run must stop."""
+    """本地支出保护触发；不重试，必须停止。 / Local spend guard tripped; never retry."""
 
 
 class JevHealthError(JevError):
-    """The local response-quality guard stopped a metering tranche."""
+    """本地响应质量保护停止当前计量批次。 / Response-quality guard stopped a metering tranche."""
 
 
 class JevJournalError(JevError):
-    """A response could not be durably recorded before validation."""
+    """响应在校验前无法持久记录。 / Response could not be durably recorded before validation."""
 
 
 class Budget:
-    """Hard client-side spend guard, checked before every HTTP attempt.
+    """每次 HTTP 请求前检查的客户端硬支出上限。 / Client-side hard spend guard before each attempt.
+
+    供应商余额耗尽不是安全熔断：它发生得太晚，还会导致样本缺口不随机。
+    已计费的 2xx 按实际成本扣除；成本未知或传输失败按估算扣除；
+    非 2xx 计请求数但不计费用。并发中的请求按估算预留。
 
     The provider running out of credit is not a stop mechanism -- it arrives
     mid-run, after the money is gone, and leaves a non-random hole in the
@@ -113,15 +117,17 @@ class Budget:
         self.attempts = 0
         self.event_seq = 0
         self.inflight = 0
-        self.actual_usd = 0.0        # provider-reported cost of billed responses
-        self.estimated_usd = 0.0     # charged at the estimate: cost unreported
-        self.billed_rejected = 0     # 2xx responses billed but rejected locally
-        self.billed = 0              # responses with a provider-reported cost
+        self.actual_usd = 0.0        # 供应商报告的已计费成本 / Provider-reported billed cost.
+        self.estimated_usd = 0.0     # 未报告成本的估算扣费 / Estimated charge when cost is unreported.
+        self.billed_rejected = 0     # 已计费但本地拒绝的 2xx / Billed 2xx rejected locally.
+        self.billed = 0              # 有供应商成本报告的响应 / Responses with reported cost.
         self.by_status: dict[str, int] = {}
 
     @property
     def unit_usd(self) -> float:
-        """Cost to assume for the next request: the configured estimate, or the
+        """下一次请求按配置估算与已付平均成本中的较高者预留，避免低估超支。
+
+        Cost to assume for the next request: the configured estimate, or the
         running mean of what the provider has actually billed, whichever is
         higher -- so a cheap estimate cannot let real spend overshoot the cap."""
         observed = self.actual_usd / self.billed if self.billed else 0.0
@@ -185,7 +191,7 @@ class Budget:
             elif estimated_charge:
                 self.estimated_usd += estimated_charge
             if self.on_attempt_event:
-                # Keep durable cumulative snapshots ordered across concurrent settles.
+                # 并发结算时仍保持累计快照持久有序。 / Keep durable snapshots ordered across concurrent settles.
                 event_seq = self.event_seq + 1
                 self.event_seq = event_seq
                 self.on_attempt_event({
@@ -213,7 +219,7 @@ class Budget:
             self.billed_rejected += 1
 
     def restore(self, snapshot: Mapping[str, Any] | None) -> None:
-        """Resume one run's cumulative spend ledger under the current caps."""
+        """按当前上限恢复单次运行的累计支出账本。 / Resume cumulative spend ledger under current caps."""
         if not snapshot:
             return
         old_requests = int(snapshot.get("max_requests", self.max_requests))
@@ -231,8 +237,8 @@ class Budget:
             committed = float(snapshot.get(
                 "committed_usd", self.actual_usd + self.estimated_usd
             ))
-            # A crash can persist an in-flight reservation without its settle
-            # event. Treat that difference as uncertain spend conservatively.
+            # 崩溃可能只持久化预留而没有结算；保守地把差额视为不确定支出。
+            # A crash may persist reservation without settlement; charge the gap conservatively.
             self.estimated_usd += max(
                 0.0, committed - self.actual_usd - self.estimated_usd
             )
@@ -267,9 +273,8 @@ class JevSettings:
     cache_dir: Path = Path("data/jev_cache")
     timeout_s: float = 60.0
     retry_delay_s: float = 0.5
-    # Re-asking after a 2xx answer fails validation pays twice for what is
-    # usually the same invalid answer, and the first bill was previously
-    # invisible to local accounting. Off unless a run explicitly opts in.
+    # 2xx 校验失败后再请求通常是为同一无效答案付两次钱；默认关闭，须显式启用。
+    # Retrying an invalid 2xx usually pays twice for the same answer; opt in explicitly.
     retry_invalid: bool = False
 
     @classmethod
@@ -344,7 +349,7 @@ class JevResult:
 
 
 class JevClient:
-    """One-call Jev client with one retry and an idempotent disk cache."""
+    """单次调用的 Jev 客户端，含有限重试与幂等磁盘缓存。 / Jev client with limited retry and idempotent cache."""
 
     def __init__(
         self,
@@ -417,8 +422,8 @@ class JevClient:
                     decoded = json.loads(response_body)
                     if not isinstance(decoded, dict):
                         raise JevSchemaError("Jev returned a non-object JSON response", status)
-                    # Validate before accepting the response. A schema failure is
-                    # retryable just like a transient HTTP failure.
+                    # 接受响应前校验；格式错误仅在显式允许付费重试时才重试。
+                    # Validate before accepting; schema retries require explicit paid opt-in.
                     _result(decoded, questions, "response-validation", cached=True)
                     return decoded
                 except (json.JSONDecodeError, JevApiError) as exc:
@@ -441,7 +446,7 @@ class JevClient:
               request_context: Mapping[str, Any] | None = None) -> tuple[int, bytes]:
         attempt = None
         if self.budget:
-            attempt = self.budget.reserve(request_context)  # durable before transport
+            attempt = self.budget.reserve(request_context)  # 传输前持久预留 / Durable before transport.
         with self._attempts_lock:
             self.request_attempts += 1
         status: int | None = None
@@ -491,7 +496,7 @@ class JevClient:
 
 
 def build_questions(grid: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
-    """Build the v3 questions: 8 categorical + 80 barrier probabilities."""
+    """构建 v3 问题：8 个类别和 80 个障碍概率。 / Build v3 questions: 8 categories and 80 barriers."""
     horizon = grid["horizon_bars"]
     questions: dict[str, dict[str, Any]] = {}
     questions["regime"] = {
@@ -656,7 +661,7 @@ def _canonical_json(value: Any) -> str:
 
 
 def canonical_hash(value: Any) -> str:
-    """Stable, secret-free hash for request and artifact identities."""
+    """请求和产物身份的稳定无密钥哈希。 / Stable secret-free identity hash."""
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
@@ -665,7 +670,7 @@ def canonical_request_payload(
     state: Any,
     questions: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
-    """Build the exact payload sent to Jev, including the injected contract."""
+    """构建实际发送给 Jev 的载荷，包含注入的契约。 / Build exact Jev payload including the contract."""
     state_obj = _jsonable(state)
     version = settings.prompt_version
     if version == PROMPT_VERSION_OHLCV_V4:
@@ -708,7 +713,7 @@ def canonical_request_identity(
     state: Any,
     questions: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
-    """Canonical request plus endpoint, excluding credentials."""
+    """规范化请求与端点，不含凭据。 / Canonical request and endpoint without credentials."""
     return {
         "endpoint": settings.base_url,
         "payload": canonical_request_payload(settings, state, questions),

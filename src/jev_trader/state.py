@@ -1,4 +1,4 @@
-"""The identical Jev market state for historical and live candles."""
+"""历史与实时 K 线共用的 Jev 市场状态。 / Shared Jev state for historical and live candles."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def market_state(symbol: str, feature_row: Mapping, recent: pd.DataFrame,
 
 
 def market_state_from_bars(symbol: str, bars: pd.DataFrame, grid: Mapping) -> dict:
-    """Build inference state from the same bounded raw-bar window in every caller."""
+    """由统一长度的原始 K 线窗口构建推理状态。 / Build inference state from one bounded raw-bar window."""
     window = bars.tail(LIVE_FEATURE_WINDOW).reset_index(drop=True)
     features = build_features(window)
     feature_row = features.iloc[-1]
@@ -61,7 +61,7 @@ def market_state_from_bars(symbol: str, bars: pd.DataFrame, grid: Mapping) -> di
 
 def market_state_from_bars_v4(exchange: str, pair: str, bars: pd.DataFrame,
                               grid: Mapping) -> dict:
-    """Build the cross-venue OHLCV-only state, separate from the Jev v3 state."""
+    """构建跨交易所的纯 OHLCV 状态，与 Jev v3 状态隔离。 / Build cross-venue OHLCV-only state, separate from v3."""
     window = bars.tail(LIVE_FEATURE_WINDOW).reset_index(drop=True)
     features = build_ohlcv_features_v1(window)
     state = market_state(

@@ -1,4 +1,4 @@
-"""Fixed-rule diagnostic signals and a local-only paper execution ledger."""
+"""固定规则诊断信号与仅本地模拟执行账本。 / Fixed-rule signals and local-only paper ledger."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ ENTRY_GRACE_MS = 60_000
 
 
 def diagnostic_signal(answers: dict, grid: dict) -> dict:
-    """A fixed raw-probability diagnostic; not calibrated EV or a trade claim."""
+    """固定原始概率诊断，不是校准 EV 或交易建议。 / Fixed raw-probability diagnostic, not trade advice."""
     if FIXED_TP not in grid["tp"] or FIXED_SL not in grid["sl"]:
         return {"status": "no_signal", "reason": "fixed_cell_missing"}
     scores = {}
@@ -54,7 +54,7 @@ def _scores(scores: dict[str, float]) -> dict:
 
 
 class PaperEngine:
-    """Idempotent local paper execution; never talks to an exchange."""
+    """幂等的本地模拟执行，绝不连接交易所下单。 / Idempotent paper execution; never places exchange orders."""
 
     def __init__(self, db: sqlite3.Connection, run_id: str, grid: dict, costs: dict):
         self.db, self.run_id, self.grid, self.costs = db, run_id, grid, costs
@@ -127,7 +127,7 @@ class PaperEngine:
         return signal
 
     def fail_market_gap(self, symbol: str, ts: int) -> dict:
-        """Cancel unseen entries and suspend open exposure when candle continuity breaks."""
+        """K 线中断时取消待入场并暂停持仓敞口。 / Cancel pending entries and suspend exposure on a gap."""
         self._suspend_for_gap(symbol, ts)
         return self.record_no_signal(symbol, ts, "", "market_data_gap")
 
@@ -173,7 +173,7 @@ class PaperEngine:
         return signal
 
     def advance(self, symbol: str, bars, *, allow_entries: bool = True) -> list[dict]:
-        """Replay unseen closed 15m bars; gaps suspend exposure rather than guess."""
+        """回放未处理的已收盘 15m K 线；缺口时暂停而非猜测。 / Replay unseen closed bars; suspend on gaps."""
         rows = bars.to_dict("records") if hasattr(bars, "to_dict") else list(bars)
         rows.sort(key=lambda row: int(row["ts"]))
         if not rows:
@@ -305,7 +305,7 @@ class PaperEngine:
         )
 
     def block_run_entries(self, reason: str, now_ms: int) -> None:
-        """Revoke currently enterable signals and cancel pending orders for this run."""
+        """撤销本轮可入场信号并取消待执行模拟单。 / Revoke enterable signals and pending paper orders."""
         latest_ts = now_ms - BAR_MS
         earliest_ts = latest_ts - ENTRY_GRACE_MS
         with self.db:

@@ -1,4 +1,7 @@
-"""Probability-quality metrics (T2.5).
+"""概率质量指标（T2.5）。 / Probability-quality metrics.
+
+始终保留 TP_FIRST、SL_FIRST、TIMEOUT 三类，不把超时并入亏损。
+交易盈亏属于校准后的下游评估，不在这里计算。
 
 Everything here is three-class: TP_FIRST / SL_FIRST / TIMEOUT. Nothing collapses
 timeout into loss -- with timeout rates of 70-80% in the wide-TP cells that
@@ -15,18 +18,18 @@ import pandas as pd
 from sklearn.metrics import log_loss, roc_auc_score
 
 N_CLASS = 3
-CLASS_NAMES = ["sl_first", "tp_first", "timeout"]  # index == Outcome value
+CLASS_NAMES = ["sl_first", "tp_first", "timeout"]  # 索引对应 Outcome / Index equals Outcome value.
 
 
 def multiclass_brier(y: np.ndarray, p: np.ndarray) -> float:
-    """Mean squared error over the full probability vector (0 = perfect, 2 = worst)."""
+    """完整概率向量的均方误差，0 最好、2 最差。 / Full-vector mean squared error, from 0 to 2."""
     onehot = np.zeros_like(p)
     onehot[np.arange(len(y)), y] = 1.0
     return float(((p - onehot) ** 2).sum(1).mean())
 
 
 def ece(y_bin: np.ndarray, p: np.ndarray, bins: int = 10) -> float:
-    """Expected calibration error with equal-mass bins."""
+    """按等样本量分箱计算期望校准误差。 / Expected calibration error with equal-mass bins."""
     if len(p) < bins * 2:
         return float("nan")
     edges = np.quantile(p, np.linspace(0, 1, bins + 1))
@@ -54,7 +57,7 @@ def reliability(y_bin: np.ndarray, p: np.ndarray, bins: int = 10) -> pd.DataFram
 
 
 def evaluate(y: np.ndarray, p: np.ndarray) -> dict:
-    """Full three-class report for one (model, slice)."""
+    """生成一个模型与切片的三分类报告。 / Three-class report for one model and slice."""
     p = np.clip(p, 1e-9, 1.0)
     p = p / p.sum(1, keepdims=True)
     out = {
@@ -69,7 +72,7 @@ def evaluate(y: np.ndarray, p: np.ndarray) -> dict:
         )
         out[f"ece_{name}"] = ece(y_bin, p[:, k])
         out[f"base_{name}"] = float(y_bin.mean())
-    # The tradeable signal: can the model rank TP-first ahead of SL-first?
+    # 可交易问题：能否将 TP 先触排在 SL 先触之前？ / Can the model rank TP-first ahead of SL-first?
     m = np.isin(y, [0, 1])
     if m.sum() > 1 and 0 < (y[m] == 1).sum() < m.sum():
         score = p[m, 1] / (p[m, 1] + p[m, 0])
@@ -83,7 +86,7 @@ def block_bootstrap_ci(
     ts: np.ndarray, y: np.ndarray, p: np.ndarray, stat, n: int = 200,
     block_ms: int = 86_400_000, seed: int = 0,
 ) -> tuple[float, float]:
-    """95% CI resampling whole days, because overlapping labels are not independent."""
+    """按整日重采样求 95% CI，避免把重叠标签视为独立。 / Day-block 95% CI for dependent labels."""
     day = ts // block_ms
     days = np.unique(day)
     by_day = {d: np.flatnonzero(day == d) for d in days}

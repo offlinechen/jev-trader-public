@@ -1,4 +1,8 @@
-"""First-touch label engine (T1.3-T1.5).
+"""首触标签引擎（T1.3-T1.5）。 / First-touch label engine.
+
+标签按价格距离而非 TP/SL 组合存储首次触及分钟，因此 1m 路径只需扫描一次，
+更改网格或缩短时长都无需重新标注。信号在 t 收盘产生，t+1 开盘入场；
+同一分钟同时触及 TP/SL 记为歧义，未来窗口不完整的样本直接剔除。
 
 The label layer is **price-level based, not TP/SL-pair based**. For each 15m
 entry bar we store, per price offset, the minute at which that offset was first
@@ -31,7 +35,7 @@ from numpy.lib.stride_tricks import sliding_window_view
 
 BAR_MS = 900_000
 MIN_MS = 60_000
-BARS_PER_MIN = 15  # 1m bars inside one 15m bar
+BARS_PER_MIN = 15  # 每根 15m 内有 15 根 1m / Fifteen 1m bars per 15m bar.
 NO_TOUCH = -1
 
 
@@ -43,17 +47,19 @@ class Outcome(IntEnum):
 
 
 def level_col(level: float, side: str) -> str:
-    """0.0075 -> 'up_75' / 'dn_75' (basis points, so no float keys)."""
+    """将 0.0075 转为基点键，避免浮点键。 / Turn 0.0075 into a basis-point key, not a float key."""
     return f"{side}_{round(level * 10_000)}"
 
 
-# --- reference implementation (T1.4) ---------------------------------------
+# --- 参考实现 / reference implementation (T1.4) -----------------------------
 
 def first_touch_bruteforce(
     high: np.ndarray, low: np.ndarray, start: int, entry: float,
     levels, horizon_min: int,
 ) -> tuple[dict, dict]:
-    """One entry, one 1m bar at a time, early-exit free. Obviously correct, slow.
+    """逐笔逐分钟扫描，不提前退出；慢但易于核对。 / Scan one entry and minute at a time; slow but clear.
+
+    这是向量化路径必须精确匹配的参考实现（tests/test_labels.py）。
 
     This is the reference. The vectorized path is only trusted where it matches
     this exactly (tests/test_labels.py).
@@ -70,13 +76,13 @@ def first_touch_bruteforce(
     return up, dn
 
 
-# --- vectorized path (T1.3) -------------------------------------------------
+# --- 向量化路径 / vectorized path (T1.3) ------------------------------------
 
 def build_labels(
     df_15m: pd.DataFrame, df_1m: pd.DataFrame, levels, horizon_bars: int,
     chunk: int = 10_000,
 ) -> pd.DataFrame:
-    """15m bars + 1m path -> first-touch offsets per price level."""
+    """由 15m K 线和 1m 路径计算每个价位的首触偏移。 / Compute first-touch offsets from 15m/1m bars."""
     levels = sorted(levels)
     horizon_min = horizon_bars * BARS_PER_MIN
 
@@ -89,11 +95,11 @@ def build_labels(
     if not np.all(np.diff(ts1) == MIN_MS):
         raise ValueError("1m series has gaps; the window arithmetic assumes it is contiguous")
 
-    # Entry opens one 15m bar after the signal bar, i.e. at that bar's close time.
+    # 信号后一根 15m 开盘入场，即信号 K 线收盘时刻。 / Enter at the next 15m open, at signal-bar close.
     entry_ts = ts15 + BAR_MS
     start = np.searchsorted(ts1, entry_ts)
 
-    # Drop the right edge: no full forward horizon means no label, not "no touch".
+    # 右边界没有完整未来窗口就剔除，不能记为未触及。 / Drop incomplete futures, not "no touch".
     ok = (start < len(ts1)) & (start + horizon_min <= len(ts1))
     ok &= np.take(ts1, np.clip(start, 0, len(ts1) - 1)) == entry_ts
     idx = np.flatnonzero(ok)
@@ -120,13 +126,13 @@ def build_labels(
         b = min(a + chunk, idx.size)
         s = start[a:b]
         e = entry[a:b, None]
-        wh, wl = win_hi[s], win_lo[s]          # fancy-index copies the chunk
+        wh, wl = win_hi[s], win_lo[s]          # 花式索引会复制分块 / Fancy indexing copies the chunk.
         for lvl in levels:
             for side, w, hit in (
                 ("up", wh, wh >= e * (1 + lvl)),
                 ("dn", wl, wl <= e * (1 - lvl)),
             ):
-                # argmax gives 0 both for "first bar" and "never"; mask with any().
+                # argmax 对首分钟和从未触及都返回 0，需用 any() 区分。 / Mask argmax's zero with any().
                 first = np.where(hit.any(1), hit.argmax(1), NO_TOUCH)
                 out[level_col(lvl, side)][a:b] = first
 
@@ -136,12 +142,14 @@ def build_labels(
     return df
 
 
-# --- derivation (T1.5) ------------------------------------------------------
+# --- 结果推导 / derivation (T1.5) ------------------------------------------
 
 def outcomes(
     labels: pd.DataFrame, side: str, tp: float, sl: float, horizon_bars: int,
 ) -> np.ndarray:
-    """Derive one grid cell from the stored offsets. No rescan, any horizon.
+    """由已存首触偏移推导单元结果，无需重扫。 / Derive one cell from stored offsets without rescanning.
+
+    多头上涨止盈、下跌止损；空头相反。允许使用不超过原标签窗口的更短时长。
 
     A long takes profit on an up move and stops on a down move; a short is the
     mirror. `horizon_bars` may be anything up to the horizon the labels were
@@ -161,7 +169,7 @@ def outcomes(
     if stored is not None and n > stored:
         raise ValueError(f"horizon {n}m exceeds the labelled horizon {stored}m")
 
-    # A touch at or beyond the requested horizon did not happen within it.
+    # 达到或晚于指定时长的触及，不算窗口内事件。 / A touch at or after the horizon is outside it.
     tp_hit = (tp_t >= 0) & (tp_t < n)
     sl_hit = (sl_t >= 0) & (sl_t < n)
 
@@ -171,12 +179,12 @@ def outcomes(
     both = tp_hit & sl_hit
     res[both & (tp_t < sl_t)] = Outcome.TP_FIRST
     res[both & (sl_t < tp_t)] = Outcome.SL_FIRST
-    res[both & (tp_t == sl_t)] = Outcome.AMBIGUOUS  # same 1m candle: unorderable
+    res[both & (tp_t == sl_t)] = Outcome.AMBIGUOUS  # 同一 1m 无法判顺序 / Same 1m cannot order touches.
     return res
 
 
 def summary(labels: pd.DataFrame, grid: dict) -> pd.DataFrame:
-    """Per-cell base / timeout / ambiguity rates (T1.7 input)."""
+    """每单元的基准、超时和歧义率（T1.7 输入）。 / Per-cell base, timeout, and ambiguity rates."""
     rows = []
     for side in ("long", "short"):
         for tp in grid["tp"]:

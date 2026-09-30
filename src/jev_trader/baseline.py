@@ -1,4 +1,8 @@
-"""Baseline models (T2.2-T2.4) and the walk-forward runner (T2.6).
+"""基线模型（T2.2-T2.4）与滚动运行器（T2.6）。 / Baselines and walk-forward runner.
+
+所有模型均预测 TP_FIRST、SL_FIRST、TIMEOUT 三类；不能把超时算作亏损。
+用一个模型覆盖 40 个网格单元，使样本与共享结构得到充分利用。
+基线的折外预测会持久化，供 Jev 增量价值检验使用。
 
 Three classes throughout -- TP_FIRST / SL_FIRST / TIMEOUT -- for every model.
 Collapsing timeout into loss would reintroduce the labelling distortion the
@@ -41,11 +45,11 @@ def cells(grid: dict) -> list[tuple[str, float, float]]:
 
 
 def build_dataset(features: pd.DataFrame, labels: pd.DataFrame, grid: dict):
-    """-> ts, F (bars x feat) float32, Y (bars x cells) int8, feature names, cells."""
+    """返回时间、特征矩阵、标签矩阵、特征名和单元。 / Return timestamps, F, Y, names, and cells."""
     df = labels[["ts"]].merge(features, on="ts", how="inner")
     fcols = [c for c in df.columns if c.startswith("f_")]
 
-    ok = df[fcols].notna().all(1).to_numpy()          # warmup NaNs, ~320 bars
+    ok = df[fcols].notna().all(1).to_numpy()          # 预热期 NaN，约 320 根 / Warmup NaNs, ~320 bars.
     df = df.loc[ok].reset_index(drop=True)
     lab = labels.loc[labels["ts"].isin(df["ts"])].reset_index(drop=True)
     lab.attrs["horizon_min"] = grid["horizon_bars"] * 15
@@ -59,7 +63,7 @@ def build_dataset(features: pd.DataFrame, labels: pd.DataFrame, grid: dict):
 
 
 def stack(F: np.ndarray, idx: np.ndarray, cs) -> np.ndarray:
-    """Bars x features -> (bars*cells) x (features + tp, sl, rr, is_long), cell-major."""
+    """将 K 线×特征堆成单元优先的训练矩阵。 / Stack bar features and cell metadata, cell-major."""
     n = len(idx)
     base = np.tile(F[idx], (len(cs), 1))
     meta = np.empty((len(cs) * n, 4), dtype=np.float32)
@@ -69,7 +73,7 @@ def stack(F: np.ndarray, idx: np.ndarray, cs) -> np.ndarray:
 
 
 def _clim(y: np.ndarray, cell_of: np.ndarray, n_cells: int) -> np.ndarray:
-    """Per-cell empirical prior -- the real null hypothesis, not 'random'."""
+    """每单元经验先验，是真正的零假设而非随机猜测。 / Per-cell empirical prior, the real null."""
     prior = np.full((n_cells, N_CLASS), 1.0 / N_CLASS)
     for j in range(n_cells):
         m = cell_of == j
@@ -83,10 +87,10 @@ def run_fold(fold: Fold, ts, F, Y, cs, out_dir: Path, horizon_bars: int, seed: i
 
     def prep(idx):
         X = stack(F, idx, cs)
-        y = Y[idx].T.ravel()                       # cell-major, matches stack()
+        y = Y[idx].T.ravel()                       # 单元优先，匹配 stack() / Cell-major, matching stack().
         cell_of = np.repeat(np.arange(n_cells), len(idx))
         ts_of = np.tile(ts[idx], n_cells)
-        keep = y != AMBIGUOUS                      # never resolved by assumption
+        keep = y != AMBIGUOUS                      # 歧义不靠假设消解 / Never resolve ambiguity by assumption.
         return X[keep], y[keep], cell_of[keep], ts_of[keep]
 
     Xtr, ytr, ctr, _ = prep(fold.train)

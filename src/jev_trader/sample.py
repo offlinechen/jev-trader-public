@@ -1,4 +1,7 @@
-"""Stratified bar sampling for the Jev spike (T3.2).
+"""Jev 探针的分层 K 线采样（T3.2）。 / Stratified bar sampling for the Jev spike (T3.2).
+
+不使用连续区间；按年、季度、波动率四分位和方向三分位按总体比例抽样，
+并给稀疏层设置下限。分层只来自特征，不使用 Jev 结果，以免循环评估。
 
 Never a contiguous block. A 2k-bar run drawn from one stretch of tape measures
 one market, and the spike's whole job is to detect signal that generalises.
@@ -38,7 +41,9 @@ def stratified_sample(
     features: pd.DataFrame, eligible_ts: np.ndarray, n: int = 2000,
     seed: int = 0, floor: int = 5,
 ) -> pd.DataFrame:
-    """Draw ~n bars, proportional across strata, restricted to `eligible_ts`.
+    """从 eligible_ts 按分层比例抽取约 n 根 K 线。 / Draw ~n eligible bars across strata.
+
+    eligible_ts 必须有基线 OOF 预测，保证在相同观测上比较 Jev 和基线。
 
     `eligible_ts` is the set of bars with OOF baseline predictions -- the spike
     must be comparable against the baselines on exactly the same observations.
@@ -57,7 +62,7 @@ def stratified_sample(
         picks.append(rng.choice(pool, k, replace=False))
     out = f.loc[np.concatenate(picks)].sort_values("ts")
 
-    # Trim proportionally if the floor overshot, keeping strata represented.
+    # 若分层下限导致超量，按比例裁减并保留各层。 / Trim proportionally after a floor overshoot.
     if len(out) > n:
         out = out.groupby("stratum", group_keys=False, observed=True).apply(
             lambda g: g.sample(max(floor, int(round(len(g) * n / len(out)))),
@@ -68,7 +73,9 @@ def stratified_sample(
 
 
 def composition(sample: pd.DataFrame, features: pd.DataFrame) -> pd.DataFrame:
-    """Sample vs population share per stratum dimension, with the skew ratio.
+    """比较各分层维度的样本与总体占比及偏斜比。 / Compare sample and population shares by stratum.
+
+    T3.2 要求任一分层的代表性不得低于总体的一半。
 
     T3.2's check: no stratum under-represented by more than 2x.
     """

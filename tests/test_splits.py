@@ -1,4 +1,6 @@
-"""T2.1 -- the purge must be horizon-aware, not a fixed gap.
+"""T2.1：清除规则须按标签时长，而非固定间隔。 / Horizon-aware purge, not a fixed gap.
+
+训练标签窗口不得与测试窗口相交，否则折外预测也会泄漏。
 
 The assertion is the requirement stated directly: no training bar's forward
 label window may intersect the test window. If that ever fails, every OOF
@@ -16,7 +18,7 @@ HORIZON = 16
 
 
 def bars(months: int = 30) -> np.ndarray:
-    n = months * 30 * 96  # 96 15m bars per day
+    n = months * 30 * 96  # 每天 96 根 15m / Ninety-six 15m bars per day.
     return (1_640_995_200_000 // BAR_MS) * BAR_MS + np.arange(n) * BAR_MS
 
 
@@ -33,10 +35,10 @@ def test_no_train_label_window_touches_test():
 
 
 def test_purge_actually_removes_bars():
-    """A purge that never removes anything is not a purge."""
+    """从不移除样本的清除规则无效。 / A purge that removes nothing is not a purge."""
     folds = walk_forward(bars(), HORIZON)
     assert all(f.purged > 0 for f in folds)
-    # Exactly the bars whose window reaches the test block: horizon + 1.
+    # 恰好清除窗口触及测试块的 horizon+1 根。 / Exactly horizon+1 bars touch test.
     assert {f.purged for f in folds} == {HORIZON + 1}
 
 

@@ -1,4 +1,4 @@
-"""Causal EV selection and execution simulation for Jev predictions."""
+"""Jev 预测的因果 EV 选择与执行模拟。 / Causal EV selection and execution simulation."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class CellPrior:
 
 
 def run_backtest(predictions: pd.DataFrame, labels: pd.DataFrame, cfg: dict[str, Any]):
-    """Replay predictions in time order; all signal-side estimates are causal."""
+    """按时间顺序回放，所有信号侧估计均保持因果性。 / Replay chronologically with causal signal estimates."""
     grid, costs, thresholds, risk = cfg["grid"], cfg["costs"], cfg["thresholds"], cfg["risk"]
     if "response_valid" in predictions:
         predictions = predictions[predictions.response_valid.fillna(False)]
@@ -161,7 +161,7 @@ statistically sufficient performance claim and does not place exchange orders.
 
 
 def choose_signal(row, ts, priors, grid, costs, thresholds):
-    """Choose the highest causal EV after the entropy/volatility filters."""
+    """经过熵与波动率筛选后选择最高因果 EV。 / Choose the highest causal EV after filters."""
     regimes = np.array([getattr(row, f"regime_{name}") for name in ("up", "down", "range", "transition")])
     regime_sum = regimes.sum()
     entropy = _entropy(regimes / regime_sum) if regime_sum > 0 else math.inf

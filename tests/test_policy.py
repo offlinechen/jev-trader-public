@@ -1,4 +1,7 @@
-"""Strategy-policy guards.
+"""策略政策保护测试。 / Strategy-policy guards.
+
+合成赢家诅咒测试是实验对照：真实 EV 相同时，argmax 应出现选择偏差，
+固定单元则不应如此；否则真实数据评估结果不可信。
 
 The synthetic winner's-curse test is the control for the whole experiment:
 when every cell's true EV is identical and predictions are unbiased noise,
@@ -66,11 +69,13 @@ def test_fixed_cell_only_chooses_the_side():
 
 
 def test_local_robust_prefers_a_supported_plateau_over_a_spike():
-    """Surface A: 13, 14, 13, 12 bps in one region. Surface B: -4, -2, +14.5, -5.
+    """A 面是平台，B 面是孤立尖峰；稳健政策应选择平台而非 argmax 尖峰。
+
+    Surface A: 13, 14, 13, 12 bps in one region. Surface B: -4, -2, +14.5, -5.
     Argmax takes the spike; the robust policy must take the plateau."""
     ev = np.full((2, 5, 4), -0.0010)
-    ev[0, 1:3, 1:3] = np.array([[13, 14], [13, 12]]) * 1e-4        # long: plateau
-    ev[1, 2, 0:4] = np.array([-4, -2, 14.5, -5]) * 1e-4            # short: isolated spike
+    ev[0, 1:3, 1:3] = np.array([[13, 14], [13, 12]]) * 1e-4        # 多头平台 / Long plateau.
+    ev[1, 2, 0:4] = np.array([-4, -2, 14.5, -5]) * 1e-4            # 空头孤立尖峰 / Short isolated spike.
     s = Surface(ev, tuple(GRID["tp"]), tuple(GRID["sl"]), 16)
     assert ArgmaxEVPolicy().build_plan(s).side == "short"
     assert LocalRobustPolicy(1.0).build_plan(s).side == "long"
@@ -87,7 +92,9 @@ def test_plan_matches_the_vectorised_core():
 
 
 def test_winners_curse_is_visible_to_the_evaluator():
-    """True EV of every cell is 0; predictions and realisations are independent
+    """各单元真实 EV 均为 0，预测和结果是独立无偏噪声；差距纯属选择偏差。
+
+    True EV of every cell is 0; predictions and realisations are independent
     unbiased noise. Any policy's predicted-minus-realised gap is pure selection."""
     rng = np.random.default_rng(1)
     n = 20_000
@@ -97,8 +104,8 @@ def test_winners_curse_is_visible_to_the_evaluator():
     c = Cubes(ts, np.zeros(n, int), pred, real, real, 0)
     days = np.unique(ts // 86_400_000)
     bias = {p.name: metrics(evaluate(p, c), n, days, 16)["selection_bias_bps"] for p in POLICIES}
-    assert bias["argmax EV"] > 30                                  # ~ E[max of 40 N(0,20bps)]
-    assert abs(bias["fixed tp1.50% sl1.00%"]) < bias["argmax EV"] / 3   # 2-way choice only
+    assert bias["argmax EV"] > 30                                  # 40 个正态变量最大值期望 / Expected max of 40 normals.
+    assert abs(bias["fixed tp1.50% sl1.00%"]) < bias["argmax EV"] / 3   # 只二选一 / Two-way choice only.
     assert bias["softmax tau=100bps"] < bias["softmax tau=5bps"] < bias["argmax EV"]
 
 
@@ -109,7 +116,7 @@ def test_to_cubes_places_cells_and_drops_incomplete_bars():
             for tp in GRID["tp"]:
                 for sl in GRID["sl"]:
                     if ts == 900_000 and side == "short" and tp == 0.030 and sl == 0.015:
-                        continue                                    # one ambiguous cell
+                        continue                                    # 一个歧义单元 / One ambiguous cell.
                     rows.append({"ts": ts, "fold": 0, "side": side, "tp": np.float32(tp),
                                  "sl": np.float32(sl), "ev": tp - sl, "net": 0.0, "gross": 0.0})
     c = to_cubes(pd.DataFrame(rows), GRID)

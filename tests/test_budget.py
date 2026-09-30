@@ -1,4 +1,7 @@
-"""The spend guard must stop locally, before money is spent -- never rely on
+"""支出保护必须在本地发请求前停止，不能依赖供应商余额耗尽。
+测试通过伪传输驱动真实客户端；未调用传输意味着请求确实未离开本机。
+
+The spend guard must stop locally, before money is spent -- never rely on
 the provider running out of credit.
 
 Every test drives the real JevClient through a fake transport, so "the
@@ -230,7 +233,7 @@ def test_request_cap_stops_before_sending(tmp_path):
         client.decide({"i": i}, Q, use_cache=False)
     with pytest.raises(JevBudgetError, match="request cap"):
         client.decide({"i": 99}, Q, use_cache=False)
-    assert len(calls) == 3                      # the 4th never left the machine
+    assert len(calls) == 3                      # 第四次未发送 / The 4th never left the machine.
 
 
 def test_dollar_cap_uses_provider_reported_cost(tmp_path):
@@ -238,9 +241,9 @@ def test_dollar_cap_uses_provider_reported_cost(tmp_path):
     budget = Budget(max_requests=1000, max_usd=0.010, est_cost_per_request=0.0003)
     client = JevClient(settings(tmp_path), transport=transport, budget=budget)
     client.decide({"i": 0}, Q, use_cache=False)
-    client.decide({"i": 1}, Q, use_cache=False)          # $0.008 committed
+    client.decide({"i": 1}, Q, use_cache=False)          # 已承诺 $0.008 / $0.008 committed.
     with pytest.raises(JevBudgetError, match="dollar cap"):
-        client.decide({"i": 2}, Q, use_cache=False)       # would pass $0.010
+        client.decide({"i": 2}, Q, use_cache=False)       # 将超过 $0.010 / Would pass $0.010.
     assert len(calls) == 2
     assert budget.snapshot()["actual_usd"] == pytest.approx(0.008)
 
@@ -260,18 +263,20 @@ def test_402_and_5xx_are_counted_not_charged(tmp_path):
         JevClient(settings(tmp_path), transport=transport, budget=budget).decide({}, Q, use_cache=False)
     snap = budget.snapshot()
     assert snap["committed_usd"] == 0 and snap["by_status"] == {"402": 1}
-    assert len(calls) == 1                      # 402 is not retried
+    assert len(calls) == 1                      # 402 不重试 / HTTP 402 is not retried.
 
 
 def test_rejected_2xx_is_billed_and_not_retried_by_default(tmp_path):
-    """The old blind spot: an invalid answer was paid for, retried, and paid for
+    """旧盲点：无效答案付费后重试再次计费，但本地记录为零成本。
+
+    The old blind spot: an invalid answer was paid for, retried, and paid for
     again, while local records showed zero cost for the bar."""
-    transport, calls = counting([ok(cost=0.0003, value=1.7)])   # out-of-range answer
+    transport, calls = counting([ok(cost=0.0003, value=1.7)])   # 越界答案 / Out-of-range answer.
     budget = Budget(max_requests=10, max_usd=1, est_cost_per_request=0.0003)
     with pytest.raises(JevApiError, match="out of range"):
         JevClient(settings(tmp_path), transport=transport, budget=budget).decide({}, Q, use_cache=False)
     snap = budget.snapshot()
-    assert len(calls) == 1                      # no paid retry of a bad answer
+    assert len(calls) == 1                      # 无效答案不付费重试 / No paid retry of bad answer.
     assert snap["actual_usd"] == pytest.approx(0.0003)
     assert snap["billed_rejected"] == 1
 
@@ -317,7 +322,7 @@ def test_meter_wal_consumes_reservations_across_crash_windows(tmp_path):
     )
     client.budget = budget
 
-    # Crash after the durable reservation but before entering the transport.
+    # 持久预留后、传输前崩溃。 / Crash after durable reservation, before transport.
     budget.reserve({"run_id": run_id, "sample_index": 1})
     state, attempted = _attempt_wal_state(_read_attempt_wal(wal, run_id), 10, 1)
     assert attempted == {1}
@@ -325,7 +330,7 @@ def test_meter_wal_consumes_reservations_across_crash_windows(tmp_path):
     assert state["committed_usd"] == pytest.approx(0.0003)
     assert calls == []
 
-    # Crash after a billed response is settled but before its checkpoint exists.
+    # 已计费响应结算后、checkpoint 前崩溃。 / Crash after billing settlement, before checkpoint.
     client.decide({"bar": 2}, Q, use_cache=False,
                   request_context={"run_id": run_id, "sample_index": 2})
     state, attempted = _attempt_wal_state(_read_attempt_wal(wal, run_id), 10, 1)
@@ -334,7 +339,7 @@ def test_meter_wal_consumes_reservations_across_crash_windows(tmp_path):
     assert state["actual_usd"] == pytest.approx(0.004)
     assert state["committed_usd"] == pytest.approx(0.0043)
     assert calls == [1]
-    # Both reserved samples are consumed on resume; no transport retry is eligible.
+    # 恢复时两个预留样本均已耗用，不得重发。 / Both reservations are consumed; no retry.
     assert [i for i in range(1, 5) if i not in attempted] == [3, 4]
     assert calls == [1]
 
@@ -373,8 +378,8 @@ def test_meter_wal_applies_settlement_after_checkpoint_to_inflight_attempt():
     first = budget.reserve({"sample_index": 1})
     budget.settle(200, ok(0.004)[1], first)
     second = budget.reserve({"sample_index": 2})
-    checkpoint = budget.snapshot()  # attempt 2 is reserved but still in flight
-    budget.settle(200, ok(0.009)[1], second)  # durable after the checkpoint
+    checkpoint = budget.snapshot()  # 第二次已预留仍在途 / Attempt 2 is reserved and inflight.
+    budget.settle(200, ok(0.009)[1], second)  # checkpoint 后持久结算 / Durable after checkpoint.
 
     recovered, attempted = _attempt_wal_state(events, 4, 0.1, checkpoint)
     assert attempted == {1, 2}
@@ -488,12 +493,14 @@ def test_cache_hits_are_free(tmp_path):
     budget = Budget(max_requests=1, max_usd=1, est_cost_per_request=0.0003)
     client = JevClient(settings(tmp_path), transport=transport, budget=budget)
     client.decide({"a": 1}, Q)
-    client.decide({"a": 1}, Q)                  # served from cache, cap is 1
+    client.decide({"a": 1}, Q)                  # 从缓存返回，上限为 1 / Cache hit with cap 1.
     assert len(calls) == 1
 
 
 def test_cap_holds_under_concurrency(tmp_path):
-    """In-flight requests are reserved at the estimate, so parallel workers
+    """在途请求按估算预留，防止并行工作线程合计超出美元上限。
+
+    In-flight requests are reserved at the estimate, so parallel workers
     cannot collectively overshoot the dollar cap."""
     gate = threading.Event()
 
@@ -649,7 +656,7 @@ def test_artifact_audit_includes_failure_artifact_and_report_attempts(tmp_path):
         encoding="utf-8",
     )
     reports = from_reports(tmp_path)
-    # No report is needed for the failure count; when present, its attempt count wins.
+    # 失败数无需报告；有报告时优先取其尝试数。 / Report is optional; its attempt count wins if present.
     artifacts = from_artifacts(tmp_path, reports)
     assert artifacts.iloc[0]["successes"] == 1
     assert artifacts.iloc[0]["failures"] == 1

@@ -259,11 +259,6 @@ def test_shadow_health_stop_blocks_before_transport(tmp_path):
              max_usd=0.02, fetch_json=fetch, client=client)
     with sqlite3.connect(tmp_path / "shadow.sqlite") as db:
         run_id = db.execute("SELECT run_id FROM observations LIMIT 1").fetchone()[0]
-        identity = db.execute(
-            "SELECT exchange, market_type, feature_version, state_version, model_id, "
-            "prompt_version FROM signal_runs WHERE run_id=? AND pair=?",
-            (run_id, "SOL/USDT:USDT"),
-        ).fetchone()
         db.executemany(
             "INSERT INTO observations VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
             [(run_id, "FAKE/USDT:USDT", i, i, "schema_error") for i in range(10)],
@@ -340,6 +335,12 @@ def test_same_cycle_health_stop_revokes_prior_symbol_before_freqtrade_confirmati
     )
     with sqlite3.connect(tmp_path / "shadow.sqlite") as db:
         run_id = db.execute("SELECT run_id FROM observations LIMIT 1").fetchone()[0]
+        identity = db.execute(
+            "SELECT exchange, market_type, feature_version, state_version, model_id, "
+            "prompt_version FROM signal_runs WHERE run_id=? AND pair=?",
+            (run_id, "SOL/USDT:USDT"),
+        ).fetchone()
+        assert identity is not None
         db.executemany(
             "INSERT INTO observations VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
             [(run_id, f"BAD{i}/USDT:USDT", i, i, "schema_error") for i in range(7)],

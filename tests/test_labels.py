@@ -1,4 +1,7 @@
-"""T1.4 / T1.5 -- the fast path is only trusted where it matches the reference.
+"""T1.4/T1.5：快速路径只有与参考实现一致才可信。
+/ The fast path is trusted only where it matches the reference.
+
+逐分钟暴力扫描定义正确性；向量化只是优化，不一致就是缺陷。
 
 `first_touch_bruteforce` is the definition of correct: one entry, one 1m bar at
 a time. `build_labels` is an optimisation, and an optimisation that disagrees
@@ -55,7 +58,7 @@ def _real():
     return pd.read_parquet(f15), pd.read_parquet(f1)
 
 
-# --- T1.4: vectorized == brute force ---------------------------------------
+# --- T1.4：向量化等于暴力扫描 / vectorized equals brute force -----------------
 
 def _compare(df_15m, df_1m, k, seed):
     labels = build_labels(df_15m, df_1m, LEVELS, HORIZON)
@@ -92,16 +95,16 @@ def test_vectorized_matches_bruteforce_real():
     _compare(df_15m, df_1m, k=1000, seed=2)
 
 
-# --- T1.3: right edge, entry price, contiguity -----------------------------
+# --- T1.3：右边界、入场价、连续性 / right edge, entry, continuity ------------
 
 def test_incomplete_horizon_is_dropped_not_labelled():
     df_1m = synthetic_1m()
     df_15m = to_15m(df_1m)
     labels = build_labels(df_15m, df_1m, LEVELS, HORIZON)
-    # Every labelled bar has a full forward window inside the 1m series.
+    # 每个有效标签都有完整的 1m 未来窗口。 / Every labelled bar has a full 1m forward window.
     last_needed = labels["entry_ts"] + HORIZON * BAR_MS
     assert (last_needed <= df_1m["ts"].iloc[-1] + MIN_MS).all()
-    # And the dropped tail is exactly the bars that lacked one.
+    # 被删除的尾部正是缺少未来窗口的 K 线。 / The dropped tail lacks that forward window.
     assert labels["ts"].iloc[-1] < df_15m["ts"].iloc[-1]
 
 
@@ -121,7 +124,7 @@ def test_gappy_1m_is_rejected():
         build_labels(df_15m, df_1m.drop(index=5000), LEVELS, HORIZON)
 
 
-# --- T1.5: outcome derivation ----------------------------------------------
+# --- T1.5：结果推导 / outcome derivation ------------------------------------
 
 def _labels_from(up_t, dn_t, horizon_min=HORIZON * 15):
     df = pd.DataFrame({level_col(0.01, "up"): [up_t], level_col(0.01, "dn"): [dn_t]})
@@ -135,14 +138,14 @@ def _labels_from(up_t, dn_t, horizon_min=HORIZON * 15):
     (10, NO_TOUCH, Outcome.TP_FIRST),
     (NO_TOUCH, 10, Outcome.SL_FIRST),
     (NO_TOUCH, NO_TOUCH, Outcome.TIMEOUT),
-    (33, 33, Outcome.AMBIGUOUS),          # same 1m candle: never assumed
+    (33, 33, Outcome.AMBIGUOUS),          # 同根 1m 不猜顺序 / Same 1m; never assume order.
 ])
 def test_outcome_long(up_t, dn_t, expected):
     assert outcomes(_labels_from(up_t, dn_t), "long", 0.01, 0.01, HORIZON)[0] == expected
 
 
 @pytest.mark.parametrize("up_t,dn_t,expected", [
-    (10, 50, Outcome.SL_FIRST),           # mirror of the long case
+    (10, 50, Outcome.SL_FIRST),           # 多头镜像 / Mirror of the long case.
     (50, 10, Outcome.TP_FIRST),
     (33, 33, Outcome.AMBIGUOUS),
 ])
@@ -152,9 +155,9 @@ def test_outcome_short(up_t, dn_t, expected):
 
 def test_shorter_horizon_truncates_without_relabelling():
     lab = _labels_from(up_t=100, dn_t=200)
-    assert outcomes(lab, "long", 0.01, 0.01, 16)[0] == Outcome.TP_FIRST   # 240m
-    assert outcomes(lab, "long", 0.01, 0.01, 8)[0] == Outcome.TP_FIRST    # 120m
-    assert outcomes(lab, "long", 0.01, 0.01, 4)[0] == Outcome.TIMEOUT     # 60m
+    assert outcomes(lab, "long", 0.01, 0.01, 16)[0] == Outcome.TP_FIRST   # 分钟 / Minutes: 240.
+    assert outcomes(lab, "long", 0.01, 0.01, 8)[0] == Outcome.TP_FIRST    # 分钟 / Minutes: 120.
+    assert outcomes(lab, "long", 0.01, 0.01, 4)[0] == Outcome.TIMEOUT     # 分钟 / Minutes: 60.
 
 
 def test_horizon_beyond_labelled_is_rejected():
@@ -163,7 +166,7 @@ def test_horizon_beyond_labelled_is_rejected():
 
 
 def test_monotone_in_level():
-    """A nearer barrier can never be touched later than a farther one."""
+    """近障碍不可能比远障碍更晚触及。 / A nearer barrier cannot be touched later than a farther one."""
     df_1m = synthetic_1m()
     lab = build_labels(to_15m(df_1m), df_1m, LEVELS, HORIZON)
     for side in ("up", "dn"):
@@ -175,11 +178,9 @@ def test_monotone_in_level():
             assert not ((n == NO_TOUCH) & (f >= 0)).any(), f"{side}: far hit, near not"
 
 
-# --- permanent invariant regression tests (locked in at Phase 2) -----------
-# These two properties fell out of the T1.7 report. They are cheap, they are
-# exact, and they would catch a silent sign or indexing error anywhere in the
-# outcome derivation -- so they stay as regression tests rather than living in
-# a one-off report.
+# --- 永久不变量回归测试 / permanent invariant regression tests ---------------
+# 这两个性质来自 T1.7 报告，可低成本捕获符号或索引错误，因此保留为回归测试。
+# These T1.7 properties cheaply catch sign/index errors and remain regression tests.
 
 GRID_TP = [0.005, 0.010, 0.015, 0.020, 0.030]
 GRID_SL = [0.005, 0.0075, 0.010, 0.015]
@@ -194,7 +195,9 @@ def _rates(lab, side, tp, sl):
 
 @pytest.mark.skipif(_real() is None, reason="real OHLCV not downloaded")
 def test_long_short_mirror_symmetry_is_exact():
-    """long(tp=a, sl=b) and short(tp=b, sl=a) are the same event, mirrored.
+    """多头 (tp=a,sl=b) 与空头 (tp=b,sl=a) 是镜像事件，必须精确一致。
+
+    long(tp=a, sl=b) and short(tp=b, sl=a) are the same event, mirrored.
 
     The two run through independent branches of outcomes(); they must agree
     exactly, not approximately.
@@ -211,7 +214,9 @@ def test_long_short_mirror_symmetry_is_exact():
 
 @pytest.mark.skipif(_real() is None, reason="real OHLCV not downloaded")
 def test_empirical_monotonicity_holds():
-    """The FR-5 constraints imposed on Jev's matrix are properties of the data.
+    """Jev 矩阵的 FR-5 单调约束也是数据自身的性质。
+
+    The FR-5 constraints imposed on Jev's matrix are properties of the data.
 
     p_tp falls as TP widens (fixed SL) and rises as SL widens (fixed TP).
     """

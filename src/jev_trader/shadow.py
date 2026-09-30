@@ -1,4 +1,4 @@
-"""Real Binance candles to Jev observations, with no order-placement path."""
+"""真实行情进入 Jev 观察链路，不包含交易所下单路径。 / Real candles to Jev observations without order placement."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def _budget_exhausted(client: JevClient) -> bool:
 
 
 def normalize_symbol(value: str) -> tuple[str, str]:
-    """Legacy public helper retained for Binance USDT-M callers."""
+    """保留供 Binance USDT-M 调用的旧版公开助手。 / Legacy helper for Binance USDT-M callers."""
     return normalize_pair("binance", value)
 
 
@@ -53,7 +53,7 @@ def _public_json(path: str, params: dict[str, str | int]) -> object:
 
 
 def closed_klines(binance_symbol: str, server_ms: int, fetch_json=_public_json) -> pd.DataFrame:
-    """Reject partial/stale/gapped candles before they can reach Jev."""
+    """在 Jev 推理前拒绝未收盘、过期或缺口 K 线。 / Reject partial, stale, or gapped candles before Jev."""
     return fetch_closed_bars("binance", binance_symbol, server_ms, fetch_json)
 
 
@@ -174,7 +174,7 @@ def _single_process(path: Path):
 def shadow_run_id(settings: JevSettings, grid: dict, exchange: str,
                   pairs: list[str], *,
                   data_provenance: str = LIVE_MARKET) -> str:
-    """Preserve the paid Binance v3 ledger key; version all new cohorts apart."""
+    """保留已付费 Binance v3 账本键，区分所有新批次。 / Preserve paid v3 ledger key; version new cohorts."""
     if data_provenance not in {LIVE_MARKET, SYNTHETIC_FIXTURE}:
         raise JevConfigError(f"unsupported data provenance {data_provenance!r}")
     questions = build_questions(grid)
@@ -296,7 +296,7 @@ def run_once(symbols: list[str], cfg: dict, *, exchange: str = "binance",
              max_requests: int | None = None, max_usd: float | None = None,
              fetch_json=None, client: JevClient | None = None,
              data_provenance: str = LIVE_MARKET) -> list[dict]:
-    """Observe closed candles; optional execution is local SQLite paper simulation only."""
+    """观察已收盘 K 线；可选执行仅为本地 SQLite 模拟。 / Observe closed candles with local-only paper execution."""
     if dry_run_trades and not live_jev:
         raise ValueError("--dry-run-trades requires --live-jev")
     if exchange not in {"binance", "okx"}:
@@ -370,7 +370,7 @@ def run_once(symbols: list[str], cfg: dict, *, exchange: str = "binance",
             try:
                 bars = fetch_closed_bars(exchange, native_symbol, server_ms, fetch_json)
             except urllib.error.HTTPError as exc:
-                if exc.code != 400:  # do not keep polling through rate limits/outages
+                if exc.code != 400:  # 限流或故障时不持续轮询 / Do not poll through rate limits or outages.
                     raise
                 if paper:
                     paper.fail_market_gap(
