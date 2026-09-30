@@ -7,6 +7,7 @@ import json
 import os
 import statistics
 import time
+from dataclasses import replace
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -15,12 +16,12 @@ import numpy as np
 import pandas as pd
 
 from . import config, data, labels as lab, sample
-from .grid import tp_key
-from .state import market_state_from_bars
+from .grid import cell_key, sl_key, tp_key
+from .state import market_state_from_bars, market_state_from_bars_v4
 from .jev import (
     Budget, JevApiError, JevBudgetError, JevClient, JevHealthError, JevJournalError,
-    JevSchemaError, JevSettings,
-    _result, build_questions,
+    JevSchemaError, JevSettings, PROMPT_VERSION_OHLCV_V4,
+    _result, build_questions, build_choice_barrier_questions,
     canonical_hash, canonical_request_identity,
 )
 
@@ -147,7 +148,7 @@ def _resume_health_outcomes(manifest: dict, checkpoint_entries: list[dict],
 
 
 def _result_record(index: int, row, result, symbol: str, prompt_version: str,
-                   request_state_hash: str) -> dict:
+                   request_state_hash: str, grid: dict) -> dict:
     record = {
         "sample_index": index,
         "ts": int(row.ts),
@@ -171,6 +172,13 @@ def _result_record(index: int, row, result, symbol: str, prompt_version: str,
         "request_error": "",
     }
     record.update(result.answers)
+    for side in ("long", "short"):
+        for tp in grid["tp"]:
+            for sl in grid["sl"]:
+                prefix = f"barrier_{cell_key(side, tp, sl)}"
+                if f"{prefix}_tp_first" in result.answers:
+                    record[tp_key(side, tp, sl)] = result.answers[f"{prefix}_tp_first"]
+                    record[sl_key(side, tp, sl)] = result.answers[f"{prefix}_sl_first"]
     return record
 
 
@@ -491,6 +499,8 @@ def _run_identity(n: int, seed: int, symbol: str, client: JevClient, workers: in
         "tp": list(grid["tp"]),
         "sl": list(grid["sl"]),
     }
+    if any(key.startswith("barrier_") for key in questions):
+        identity["diagnostic_choice_rounding_tolerance"] = 0.011
     run_id = canonical_hash(identity)[:16]
     return identity, run_id
 
@@ -675,12 +685,15 @@ def run(n: int = 100, seed: int = 20260921, eligible_ts: np.ndarray | None = Non
         est_cost_per_request: float = DEFAULT_EST_COST_PER_REQUEST,
         log_every: int = 100, health_min_samples: int = 10,
         health_window: int = 20, max_invalid_rate: float = 0.25,
-        allow_health_override: bool = False) -> Path:
+        allow_health_override: bool = False, contiguous: bool = False,
+        prompt_version: str | None = None, choice_barriers: bool = False) -> Path:
     if max_requests is None or max_usd is None:
         raise JevBudgetError(
             "a live metering run needs explicit max_requests and max_usd -- "
             "provider credit exhaustion is not a stop mechanism"
         )
+    if choice_barriers and not contiguous:
+        raise ValueError("choice barriers are diagnostic only and require --contiguous")
     if health_min_samples <= 0 or health_window < health_min_samples:
         raise ValueError("health window must be >= a positive minimum sample count")
     if not 0 <= max_invalid_rate <= 1:
@@ -696,9 +709,15 @@ def run(n: int = 100, seed: int = 20260921, eligible_ts: np.ndarray | None = Non
         if col != "ts" and pd.api.types.is_numeric_dtype(features[col])
     ]
     eligible = features.dropna(subset=feature_cols)
-    all_eligible_ts, oof_audit = _g3b_candidate_timestamps(
-        Path(cfg["data_dir"]), eligible, labels, cfg["grid"]
-    )
+    if contiguous:
+        all_eligible_ts = np.intersect1d(
+            eligible.ts.to_numpy(np.int64), labels.ts.to_numpy(np.int64)
+        )
+        oof_audit = {"selection": "latest complete contiguous window; no OOF gate"}
+    else:
+        all_eligible_ts, oof_audit = _g3b_candidate_timestamps(
+            Path(cfg["data_dir"]), eligible, labels, cfg["grid"]
+        )
     if eligible_ts is not None:
         all_eligible_ts = np.intersect1d(all_eligible_ts, np.asarray(eligible_ts, dtype=np.int64))
     target_population = eligible[eligible["ts"].isin(all_eligible_ts)]
@@ -708,13 +727,19 @@ def run(n: int = 100, seed: int = 20260921, eligible_ts: np.ndarray | None = Non
     )
     draw_ts = np.asarray(sorted(set(all_eligible_ts) - excluded_historic_ts), dtype=np.int64)
     draw_pool = eligible[eligible["ts"].isin(draw_ts)]
-    picked = sample.stratified_sample(draw_pool, draw_ts, n=n, seed=seed, floor=1)
-    if len(picked) < n:
-        remaining = draw_pool[~draw_pool["ts"].isin(picked["ts"])]
-        extra = remaining.sample(n=n - len(picked), random_state=seed)
-        picked = pd.concat([picked, extra], ignore_index=True)
-    if len(picked) > n:
-        picked = picked.sample(n=n, random_state=seed).sort_values("ts")
+    if contiguous:
+        picked = sample.strata(draw_pool).sort_values("ts").tail(n)
+        if len(picked) != n or picked.ts.diff().iloc[1:].ne(900_000).any():
+            raise ValueError("no complete contiguous window of requested length")
+        draw_ts = picked.ts.to_numpy(np.int64)
+    else:
+        picked = sample.stratified_sample(draw_pool, draw_ts, n=n, seed=seed, floor=1)
+        if len(picked) < n:
+            remaining = draw_pool[~draw_pool["ts"].isin(picked["ts"])]
+            extra = remaining.sample(n=n - len(picked), random_state=seed)
+            picked = pd.concat([picked, extra], ignore_index=True)
+        if len(picked) > n:
+            picked = picked.sample(n=n, random_state=seed).sort_values("ts")
     assert len(picked) == n and picked["ts"].is_unique
     composition = sample.composition(picked, target_population)
     if n >= 10_000 and not composition["ok"].all():
@@ -723,8 +748,14 @@ def run(n: int = 100, seed: int = 20260921, eligible_ts: np.ndarray | None = Non
 
     out_dir = Path(cfg["data_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
-    questions = build_questions(cfg["grid"])
-    client = JevClient(JevSettings.from_config(cfg))
+    questions = (build_choice_barrier_questions(cfg["grid"])
+                 if choice_barriers else build_questions(cfg["grid"]))
+    settings = JevSettings.from_config(cfg)
+    if prompt_version is not None:
+        settings = replace(settings, prompt_version=prompt_version)
+    if choice_barriers and settings.prompt_version != PROMPT_VERSION_OHLCV_V4:
+        raise ValueError("choice barriers require the jev-ohlcv-v4 prompt")
+    client = JevClient(settings)
     labels_by_ts = labels.set_index("ts")
     started = time.perf_counter()
     def build_state(row) -> dict:
@@ -732,6 +763,10 @@ def run(n: int = 100, seed: int = 20260921, eligible_ts: np.ndarray | None = Non
         window = ohlcv[ohlcv["ts"] <= ts].tail(1500)
         if window.empty or int(window.iloc[-1]["ts"]) != ts:
             raise ValueError(f"bar {ts} is absent from raw OHLCV")
+        if settings.prompt_version == PROMPT_VERSION_OHLCV_V4:
+            return market_state_from_bars_v4(
+                "binance", cfg["symbols"][0], window, cfg["grid"]
+            )
         return market_state_from_bars(cfg["symbols"][0], window, cfg["grid"])
 
     picked_rows = list(picked.itertuples(index=False))
@@ -882,7 +917,7 @@ def run(n: int = 100, seed: int = 20260921, eligible_ts: np.ndarray | None = Non
         if result is not None:
             record = _result_record(
                 index, row, result, cfg["symbols"][0], client.settings.prompt_version,
-                request_state_hash,
+                request_state_hash, cfg["grid"],
             )
             _append_checkpoint(checkpoint_path, {
                 "sample_index": index, "run_id": run_id, "status": "success",
@@ -976,7 +1011,7 @@ def run(n: int = 100, seed: int = 20260921, eligible_ts: np.ndarray | None = Non
             }
         return index, _result_record(
             index, row, result, cfg["symbols"][0], client.settings.prompt_version,
-            request_state_hash,
+            request_state_hash, cfg["grid"],
         ), None
 
     rows = [
@@ -1165,22 +1200,23 @@ def _report(frame, picked, failures, client, n, seed, workers, use_cache, horizo
     brier = float(np.mean((p[nonambiguous] - actual_tp[nonambiguous]) ** 2))
     title = f"Jev {n}-bar diagnostic replay / inference cost report" if n == 100 else f"Jev {n}-request inference cost report"
     manifest_path = output.with_name(f"{output.stem}_manifest.json")
+    composition_path = output.with_name(f"{output.stem}_composition.csv")
     parts_path = output.parent / f"{output.stem}_parts/part_*.parquet"
     journal_path = output.parent / f"{output.stem}_parts/checkpoint.jsonl"
     return f"""# {title}
 
-Generated: 2026-09-21  
+Generated: {time.strftime('%Y-%m-%d', time.gmtime())}
 Input artifact: `{output}`  
 Sampling seed: `{seed}`
 
 ## Executive result
 
 - **Logical Jev requests:** {n}
-- **Inference API requests:** {n} (one per sampled 15m bar)
+- **Inference API attempts:** {client.request_attempts} (cached bars send no request)
 - **Exchange/order requests:** 0 (inference-only run; no execution adapter)
 - **Successful responses:** {len(valid)} ({len(valid) / n:.1%})
 - **Failed responses:** {len(failures)}
-- **Actual HTTP attempts:** {client.request_attempts}
+- **Cached valid responses:** {int(valid.cached.sum()) if 'cached' in valid else 0}
 - **Budget ledger (all billed attempts, incl. rejected responses):** {client.budget.snapshot() if client.budget else 'no budget guard'}
 - **Request workers:** {workers}
 - **Local response cache enabled:** {use_cache}

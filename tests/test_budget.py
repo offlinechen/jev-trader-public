@@ -32,7 +32,7 @@ from jev_trader.meter import (
     _attempt_wal_state, _load_or_create_manifest, _read_attempt_wal,
     _cache_response_for_attempt, _health_stop_reason, _read_checkpoint,
     _recover_missing_settlements, _resume_health_outcomes, _replay_response,
-    _run_identity, preflight,
+    _run_identity, preflight, run as meter_run,
 )
 
 Q = {"smoke": {"type": "noul", "instructions": "?"}}
@@ -65,6 +65,11 @@ def test_meter_health_stop_uses_recent_invalid_schema_rate():
     assert _health_stop_reason([True] * 3 + [False] * 7) is not None
     assert _health_stop_reason([True] * 5 + [False] * 15) is None
     assert _health_stop_reason([False] * 9 + [True] * 6 + [False] * 5) is not None
+
+
+def test_choice_barriers_cannot_enter_formal_stratified_meter():
+    with pytest.raises(ValueError, match="diagnostic only"):
+        meter_run(n=1, choice_barriers=True, max_requests=1, max_usd=0.01)
 
 
 def test_response_replay_validates_persisted_body_without_transport():

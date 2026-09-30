@@ -11,6 +11,8 @@ from jev_trader.jev import (
     JevConfigError,
     JevSettings,
     build_questions,
+    build_choice_barrier_questions,
+    _result,
     canonical_request_payload,
     canonical_request_identity,
     prompt_contract_v4,
@@ -45,6 +47,33 @@ def test_build_questions_matches_prediction_contract():
     assert "p_long_tp050_sl075" in questions
     assert "p_short_tp300_sl150" in questions
     assert sum(question["type"] == "noul" for question in questions.values()) == 80
+
+
+def test_diagnostic_choice_barriers_accept_rounding_without_normalizing():
+    questions = build_choice_barrier_questions({
+        "horizon_bars": 16, "tp": [0.005], "sl": [0.005],
+    })
+    answers = {
+        key: {"type": "choice", "probabilities": {
+            option: value for option, value in zip(question["criteria"], values)
+        }}
+        for key, question, values in (
+            ("regime", questions["regime"], [0.25, 0.25, 0.25, 0.24]),
+            ("volatility", questions["volatility"], [0.25] * 4),
+            ("barrier_long_tp050_sl050", questions["barrier_long_tp050_sl050"],
+             [0.20, 0.30, 0.49]),
+            ("barrier_short_tp050_sl050", questions["barrier_short_tp050_sl050"],
+             [0.20, 0.30, 0.50]),
+        )
+    }
+    raw = {"model": "jev-test", "answers": answers,
+           "usage": {"input_tokens": 1, "output_tokens": 1}}
+    result = _result(raw, questions, "test", cached=False)
+    assert result.answers["barrier_long_tp050_sl050_timeout"] == 0.49
+    assert result.answers["regime_transition"] == 0.24
+    strict = {"regime": questions["regime"]}
+    with pytest.raises(JevSchemaError, match="do not sum"):
+        _result(raw, strict, "test", cached=False)
 
 
 def test_request_shape_response_validation_and_cache(tmp_path):

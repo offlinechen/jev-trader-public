@@ -110,6 +110,9 @@ def cmd_meter(args, cfg):
         health_window=args.health_window,
         max_invalid_rate=args.max_invalid_rate,
         allow_health_override=args.allow_health_override,
+        contiguous=args.contiguous,
+        prompt_version=args.prompt_version,
+        choice_barriers=args.choice_barriers,
     )
     print(f"report -> {report}")
 
@@ -245,6 +248,12 @@ def main(argv=None) -> int:
     t.add_argument("--allow-health-override", action="store_true",
                    help="explicitly authorize a new tranche after a schema-health stop")
     t.add_argument("--no-cache", action="store_true")
+    t.add_argument("--contiguous", action="store_true",
+                   help="use the latest n complete consecutive labelled bars for a diagnostic replay")
+    t.add_argument("--prompt-version", choices=("v3", "jev-ohlcv-v4"),
+                   help="override the prompt for this run without changing config")
+    t.add_argument("--choice-barriers", action="store_true",
+                   help="diagnostic mutually exclusive TP/SL/timeout questions")
     t.set_defaults(fn=cmd_meter)
 
     s = sub.add_parser("audit-spend", help="reconcile Jev spend against OpenRouter")

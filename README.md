@@ -58,6 +58,10 @@ Copy `.env.example` to `.env` and fill `JEV_API_KEY` only when deliberately runn
 
 Paid meter/shadow runs require explicit cumulative `--max-requests` and `--max-usd` caps and write a local spend ledger. A smoke response is neither a trading signal nor a research result. Keep real exchange credentials out of this repository; the supplied Freqtrade templates are dry-run only and intentionally contain none. Their API server is disabled; never enable it with the public placeholder credentials.
 
+`meter` 另提供 `--contiguous --prompt-version jev-ohlcv-v4 --choice-barriers`，用于在本地**历史归档**的最新完整连续窗口进行诊断性 Jev 回放。须先准备对应的 15m/1m、特征和标签，再显式设置请求数与美元硬上限。三分类问题和 0.01 舍入容差仅用于诊断，不替代正式 G3b 确认；该命令只生成预测，不会向交易所下单。收益回放需另行使用 `backtest` 命令。
+
+`meter` also offers `--contiguous --prompt-version jev-ohlcv-v4 --choice-barriers` for a diagnostic Jev replay over the latest complete consecutive window in the **local historical archives**. Prepare matching 15m/1m candles, features, and labels first, then set explicit hard request and USD caps. The three-way questions and 0.01 rounding tolerance are diagnostic only, not a replacement for formal G3b confirmation. This command generates predictions but no exchange orders; use `backtest` separately to simulate returns.
+
 ## 仓库结构 / Repository map
 
 - `src/jev_trader/`：市场数据、特征、标签、模型客户端、基线、评估和诊断性模拟执行。 / Market data, features, labels, model client, baselines, evaluation, and diagnostic paper execution.

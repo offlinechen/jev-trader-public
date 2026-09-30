@@ -18,7 +18,7 @@ from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
 
 from .features import OHLCV_FEATURES_V1
-from .grid import sl_key, tp_key
+from .grid import cell_key, sl_key, tp_key
 
 DEFAULT_URL = "https://openrouter.ai/api/alpha/decisions"
 DEFAULT_PROMPT_VERSION = "v3"
@@ -543,6 +543,31 @@ def build_questions(grid: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     return questions
 
 
+def build_choice_barrier_questions(grid: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """诊断性互斥屏障结果提问。 / Diagnostic mutually exclusive barrier questions."""
+    questions = {
+        key: value for key, value in build_questions(grid).items()
+        if key in {"regime", "volatility"}
+    }
+    for side in ("long", "short"):
+        for tp in grid["tp"]:
+            for sl in grid["sl"]:
+                questions[f"barrier_{cell_key(side, tp, sl)}"] = {
+                    "type": "choice",
+                    "instructions": (
+                        f"For a {side} trade entered at the next 15m open, which "
+                        f"mutually exclusive outcome occurs first within "
+                        f"{grid['horizon_bars']} bars? TP={tp:.4%}, SL={sl:.4%}."
+                    ),
+                    "criteria": {
+                        "tp_first": "take-profit is touched before stop-loss",
+                        "sl_first": "stop-loss is touched before take-profit",
+                        "timeout": "neither barrier is touched within the horizon",
+                    },
+                }
+    return questions
+
+
 def _result(
     raw: Mapping[str, Any],
     questions: Mapping[str, Mapping[str, Any]],
@@ -555,6 +580,11 @@ def _result(
         raise JevSchemaError("Jev response must be an object")
     if not isinstance(raw.get("answers"), dict):
         raise JevSchemaError("Jev response missing object: answers")
+    # 三分类诊断输出保留两位小数；允许 0.01 舍入残差，但不改模型原值。
+    # Accept a 0.01 rounding residual only for diagnostic choice barriers;
+    # the production binary-question schema keeps its stricter tolerance.
+    choice_barriers = any(key.startswith("barrier_") for key in questions)
+    choice_sum_tolerance = 0.011 if choice_barriers else 1e-3
     answers: dict[str, float] = {}
     for key in questions:
         answer = raw["answers"].get(key)
@@ -574,7 +604,7 @@ def _result(
             values = list(probabilities.values())
             if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1 for value in values):
                 raise JevSchemaError(f"Jev response choice probability out of range: {key}")
-            if not math.isclose(sum(values), 1.0, abs_tol=1e-3):
+            if not math.isclose(sum(values), 1.0, abs_tol=choice_sum_tolerance):
                 raise JevSchemaError(f"Jev response choice probabilities do not sum to 1: {key}")
             output_prefix = "vol" if key == "volatility" else key
             for option, value in probabilities.items():

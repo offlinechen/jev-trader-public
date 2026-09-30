@@ -34,7 +34,8 @@ def run_backtest(predictions: pd.DataFrame, labels: pd.DataFrame, cfg: dict[str,
 
     for row in predictions.itertuples(index=False):
         ts = int(row.ts)
-        if ts < open_until:
+        # Binance `ts` 是开盘时间，信号到收盘才可用。 / `ts` is bar open; signal exists at close.
+        if ts + lab.BAR_MS < open_until:
             decisions.append({"ts": ts, "action": "blocked_open_position"})
             continue
         if ts not in label_by_ts.index:
@@ -206,7 +207,9 @@ def choose_signal(row, ts, priors, grid, costs, thresholds):
 
 
 def _build_priors(labels, grid):
-    ts = labels["ts"].to_numpy()
+    # 超时收益必须等完整预测窗口结束才可用。 / A timeout return is known only
+    # after the full forward horizon, not at the prior signal timestamp.
+    mature_ts = labels["ts"].to_numpy() + grid["horizon_bars"] * lab.BAR_MS
     priors = {}
     for side in ("long", "short"):
         for tp in grid["tp"]:
@@ -219,14 +222,14 @@ def _build_priors(labels, grid):
                 if side == "short":
                     signed_ret = -signed_ret
                 cumulative_timeout_return = np.cumsum(np.where(timeout, signed_ret, 0.0))
-                priors[(side, tp, sl)] = (ts, cumulative_timeout,
+                priors[(side, tp, sl)] = (mature_ts, cumulative_timeout,
                                           cumulative_timeout_return)
     return priors
 
 
 def _prior_stats(prior, ts):
     timestamps, cumulative_timeout, cumulative_return = prior
-    end = int(np.searchsorted(timestamps, ts, side="left"))
+    end = int(np.searchsorted(timestamps, ts, side="right"))
     timeout_count = int(cumulative_timeout[end - 1]) if end else 0
     timeout_sum = float(cumulative_return[end - 1]) if end else 0.0
     return CellPrior(
